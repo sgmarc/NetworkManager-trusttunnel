@@ -1,0 +1,53 @@
+# Object files
+*.o
+*.lo
+
+# Libraries
+*.a
+*.la
+
+# Shared objects
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build directories and caches
+.deps/
+.libs/
+autom4te.cache/
+.dirstamp
+
+# Autotools generated files
+Makefile
+Makefile.in
+configure
+config.*
+aclocal.m4
+compile
+depcomp
+install-sh
+libtool
+ltmain.sh
+missing
+stamp-h1
+stamp-*
+m4/*.m4
+
+# Generated targets and descriptors
+nm-trusttunnel-service
+nm-trusttunnel-service.name
+NetworkManager-trusttunnel-*.tar*
+
+# Editor backups and tags
+*~
+*.swp
+*.bak
+tags
+TAGS
+cscope.*

@@ -1,0 +1,12 @@
+[VPN Connection]
+name=trusttunnel
+service=org.freedesktop.NetworkManager.trusttunnel
+program=@LIBEXECDIR@/nm-trusttunnel-service
+supports-multiple-connections=true
+supports-safe-private-file-access=true
+
+[libnm]
+plugin=@PLUGINDIR@/libnm-vpn-plugin-trusttunnel.so
+
+[GNOME]
+properties=@PLUGINDIR@/libnm-gtk3-vpn-plugin-trusttunnel-editor

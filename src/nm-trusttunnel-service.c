@@ -25,6 +25,7 @@ typedef struct {
 	GDBusProxy *proxy;
 	gulong signal_handler_id;
 	guint connect_timeout_id;
+	guint retry_timeout_id;
 	GCancellable *cancellable;
 	char *endpoint_address;
 	char *server_address;
@@ -50,12 +51,33 @@ static GMainLoop *loop = NULL;
 
 static void start_session (NMTrusttunnelPlugin *plugin);
 
+static gboolean
+retry_start_cb (gpointer user_data)
+{
+	NMTrusttunnelPlugin *plugin = NM_TRUSTTUNNEL_PLUGIN (user_data);
+	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
+
+	priv->retry_timeout_id = 0;
+	start_session (plugin);
+
+	return G_SOURCE_REMOVE;
+}
+
 static void
 clear_connect_timeout (NMTrusttunnelPluginPrivate *priv)
 {
 	if (priv->connect_timeout_id) {
 		g_source_remove (priv->connect_timeout_id);
 		priv->connect_timeout_id = 0;
+	}
+}
+
+static void
+clear_retry_timeout (NMTrusttunnelPluginPrivate *priv)
+{
+	if (priv->retry_timeout_id) {
+		g_source_remove (priv->retry_timeout_id);
+		priv->retry_timeout_id = 0;
 	}
 }
 
@@ -277,8 +299,14 @@ handle_state_changed (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 
 		if (priv->stopping_for_retry) {
 			/* This is the session the plugin stopped itself to repeat the
-			 * Start request, it is not a failure. */
+			 * Start request. The daemon stops the session asynchronously and
+			 * releases it only afterwards, so the request is repeated with
+			 * a short delay, once the session is really gone. */
 			g_message ("trusttunneld reports the session stopped, the request is repeated");
+			clear_retry_timeout (priv);
+			priv->retry_timeout_id = g_timeout_add (NM_TRUSTTUNNEL_RETRY_DELAY_MS,
+			                                       retry_start_cb,
+			                                       plugin);
 			break;
 		}
 
@@ -382,8 +410,8 @@ on_stop_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 	if (priv->aborted)
 		return;
 
-	/* The stale session is gone, try to start ours. */
-	start_session (plugin);
+	/* The daemon stops the session asynchronously, the request is repeated
+	 * when it reports the session as disconnected. */
 }
 
 static void
@@ -430,7 +458,8 @@ on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 	if (err_code == NM_TRUSTTUNNEL_ERROR_ALREADY_RUNNING) {
 		if (!priv->start_retried) {
 			/* The daemon keeps a single session, a session left over by a
-			 * crashed client is stopped and the request is repeated once. */
+			 * crashed client is stopped and the request is repeated once the
+			 * daemon reports the session as disconnected. */
 			priv->start_retried = TRUE;
 			priv->stopping_for_retry = TRUE;
 			g_message ("trusttunneld reports a running session, stopping it and retrying");
@@ -615,6 +644,7 @@ real_connect (NMVpnServicePlugin *plugin,
 	priv->stop_requested = FALSE;
 	priv->start_retried = FALSE;
 	priv->stopping_for_retry = FALSE;
+	clear_retry_timeout (priv);
 	priv->has_ip4 = FALSE;
 	priv->has_ip6 = FALSE;
 	priv->sent_ip4 = FALSE;
@@ -669,6 +699,7 @@ real_disconnect (NMVpnServicePlugin *plugin, GError **err)
 	g_message ("real_disconnect: stopping TrustTunnel connection");
 
 	clear_connect_timeout (priv);
+	clear_retry_timeout (priv);
 
 	/* Abort a connect sequence that is still in flight, its asynchronous
 	 * callbacks must not start a session anymore. */
@@ -792,6 +823,7 @@ nm_trusttunnel_plugin_dispose (GObject *object)
 		real_disconnect (NM_VPN_SERVICE_PLUGIN (plugin), NULL);
 
 	clear_connect_timeout (priv);
+	clear_retry_timeout (priv);
 
 	if (priv->cancellable)
 		g_cancellable_cancel (priv->cancellable);

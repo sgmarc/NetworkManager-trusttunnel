@@ -62,4 +62,9 @@ typedef enum {
 #define NM_TRUSTTUNNEL_STOP_TIMEOUT_SEC    3
 #define NM_TRUSTTUNNEL_CONNECT_TIMEOUT_SEC 30
 
+/* Delay before the Start request is repeated after the daemon reported the
+ * session as disconnected. The daemon releases the session only after it has
+ * sent the signal, so the request must not be repeated immediately. */
+#define NM_TRUSTTUNNEL_RETRY_DELAY_MS     500
+
 #endif /* NM_TRUSTTUNNEL_SERVICE_DEFINES_H */

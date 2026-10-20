@@ -10,6 +10,8 @@ nmvpnservice_DATA = nm-trusttunnel-service.name
 # NetworkManager resolves the plugin relative to its own plugin directory.
 # With --enable-absolute-paths the absolute installation path is written
 # instead, which is handy for development builds.
+# The .name file also states that the daemon keeps a single session, so
+# NetworkManager must not activate two connections of this type at once.
 nm-trusttunnel-service.name: $(srcdir)/nm-trusttunnel-service.name.in
 	$(AM_V_GEN) sed -e 's|[@]LIBEXECDIR[@]|$(libexecdir)|g' \
 	    -e 's|[@]PLUGINDIR[@]/|@NM_PLUGIN_DIR_NAME_FILE@|g' \

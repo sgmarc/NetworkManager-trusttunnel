@@ -2,6 +2,7 @@
 /* test-config.c - unit tests for the TrustTunnel configuration model */
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <string.h>
 
 #include "nm-trusttunnel-config.h"
@@ -25,10 +26,12 @@ new_vpn_setting (void)
 static char *
 build_toml_for (NMSettingVpn *s_vpn, GError **error)
 {
-	NMTTrusttunnelConfig *config = nm_trusttunnel_config_from_settings (s_vpn);
+	NMTTrusttunnelConfig *config = nm_trusttunnel_config_from_settings (s_vpn, error);
 	char *toml;
 
-	g_assert_nonnull (config);
+	if (!config)
+		return NULL;
+
 	toml = nm_trusttunnel_config_to_toml (config, error);
 	nm_trusttunnel_config_free (config);
 
@@ -179,6 +182,54 @@ test_invalid_port (void)
 	g_object_unref (s_vpn);
 }
 
+static void
+test_invalid_protocol (void)
+{
+	NMSettingVpn *s_vpn = new_vpn_setting ();
+	GError *error = NULL;
+	char *toml;
+
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL, "http1");
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_null (toml);
+	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
+	g_clear_error (&error);
+	g_object_unref (s_vpn);
+
+	/* "quic" is a legacy alias for "http3" and stays accepted. */
+	s_vpn = new_vpn_setting ();
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL, "quic");
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (strstr (toml, "upstream_protocol = \"http3\""));
+	g_free (toml);
+	g_object_unref (s_vpn);
+}
+
+static void
+test_invalid_allow_ipv6 (void)
+{
+	NMSettingVpn *s_vpn = new_vpn_setting ();
+	GError *error = NULL;
+	char *toml;
+
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ALLOW_IPV6, "maybe");
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_null (toml);
+	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
+	g_clear_error (&error);
+	g_object_unref (s_vpn);
+
+	/* "no" is a valid spelling of false. */
+	s_vpn = new_vpn_setting ();
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ALLOW_IPV6, "no");
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (strstr (toml, "has_ipv6 = false"));
+	g_free (toml);
+	g_object_unref (s_vpn);
+}
+
 static char *
 write_temp_config (const char *content)
 {
@@ -186,8 +237,24 @@ write_temp_config (const char *content)
 	char *path = g_build_filename (dir, "config.toml", NULL);
 
 	g_assert_true (g_file_set_contents (path, content, -1, NULL));
+	g_free (dir);
 
 	return path;
+}
+
+static void
+remove_temp_config (char *path)
+{
+	char *dir;
+
+	if (!path)
+		return;
+
+	dir = g_path_get_dirname (path);
+	g_unlink (path);
+	g_rmdir (dir);
+	g_free (dir);
+	g_free (path);
 }
 
 static void
@@ -204,7 +271,7 @@ test_config_file_without_listener (void)
 	g_assert_nonnull (strstr (toml, "included_routes = []"));
 
 	g_free (toml);
-	g_free (path);
+	remove_temp_config (path);
 }
 
 static void
@@ -220,7 +287,7 @@ test_config_file_managed (void)
 	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
 	g_clear_error (&error);
 
-	g_free (path);
+	remove_temp_config (path);
 }
 
 static void
@@ -237,7 +304,7 @@ test_config_file_included_routes (void)
 	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
 	g_clear_error (&error);
 
-	g_free (path);
+	remove_temp_config (path);
 }
 
 static void
@@ -253,7 +320,7 @@ test_config_file_socks (void)
 	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
 	g_clear_error (&error);
 
-	g_free (path);
+	remove_temp_config (path);
 }
 
 static void
@@ -271,7 +338,7 @@ test_config_file_unmanaged_is_accepted (void)
 	g_assert_null (strstr (toml, "[listener]\n[listener.tun]"));
 
 	g_free (toml);
-	g_free (path);
+	remove_temp_config (path);
 }
 
 static void
@@ -289,7 +356,7 @@ test_config_file_without_managed (void)
 	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
 	g_clear_error (&error);
 
-	g_free (path);
+	remove_temp_config (path);
 }
 
 static void
@@ -306,7 +373,7 @@ test_config_file_quoted_managed (void)
 	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
 	g_clear_error (&error);
 
-	g_free (path);
+	remove_temp_config (path);
 }
 
 static void
@@ -322,7 +389,7 @@ test_config_file_empty_routes_with_spaces (void)
 	g_assert_nonnull (toml);
 
 	g_free (toml);
-	g_free (path);
+	remove_temp_config (path);
 }
 
 static void
@@ -360,6 +427,8 @@ main (int argc, char **argv)
 	g_test_add_func ("/config/protocol", test_protocol);
 	g_test_add_func ("/config/required-fields", test_required_fields);
 	g_test_add_func ("/config/invalid-port", test_invalid_port);
+	g_test_add_func ("/config/invalid-protocol", test_invalid_protocol);
+	g_test_add_func ("/config/invalid-allow-ipv6", test_invalid_allow_ipv6);
 	g_test_add_func ("/config/file-without-listener", test_config_file_without_listener);
 	g_test_add_func ("/config/file-managed", test_config_file_managed);
 	g_test_add_func ("/config/file-included-routes", test_config_file_included_routes);

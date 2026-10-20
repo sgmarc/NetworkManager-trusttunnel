@@ -2,7 +2,9 @@
 name=trusttunnel
 service=org.freedesktop.NetworkManager.trusttunnel
 program=@LIBEXECDIR@/nm-trusttunnel-service
-supports-multiple-connections=true
+# The daemon keeps a single session, so two connections of this type must not
+# be activated at the same time.
+supports-multiple-connections=false
 supports-safe-private-file-access=true
 
 [libnm]

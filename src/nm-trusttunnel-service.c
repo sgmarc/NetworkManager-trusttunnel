@@ -32,6 +32,8 @@ typedef struct {
 	gboolean connected;
 	gboolean aborted;
 	gboolean stop_requested;
+	gboolean start_retried;
+	gboolean stopping_for_retry;
 	gboolean allow_ipv6;
 	gboolean has_ip4;
 	gboolean has_ip6;
@@ -132,6 +134,9 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 
 	if (priv->server_address) {
 		struct in_addr ext_gw;
+		/* The external gateway is the address of the VPN endpoint, NetworkManager
+		 * uses it in its route calculations. The peer of a TUN device is unknown,
+		 * so no PTP is reported at all. */
 		if (inet_pton (AF_INET, priv->server_address, &ext_gw) == 1) {
 			g_variant_builder_add (&config, "{sv}",
 			                       NM_VPN_PLUGIN_CONFIG_EXT_GATEWAY,
@@ -162,12 +167,6 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 		g_variant_builder_add (&ip4config, "{sv}",
 		                       NM_VPN_PLUGIN_IP4_CONFIG_PREFIX,
 		                       g_variant_new_uint32 (prefix));
-
-		if (prefix == 32) {
-			g_variant_builder_add (&ip4config, "{sv}",
-			                       NM_VPN_PLUGIN_IP4_CONFIG_PTP,
-			                       g_variant_new_uint32 (v4_addr.s_addr));
-		}
 
 		if (dns_strv && n_dns > 0) {
 			GVariantBuilder dns_builder;
@@ -213,16 +212,6 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 		                       NM_VPN_PLUGIN_IP6_CONFIG_PREFIX,
 		                       g_variant_new_uint32 (p6));
 
-		if (p6 == 128) {
-			GVariant *v6_ptp_var = g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE,
-			                                                  &v6_addr,
-			                                                  sizeof (v6_addr),
-			                                                  1);
-			g_variant_builder_add (&ip6config, "{sv}",
-			                       NM_VPN_PLUGIN_IP6_CONFIG_PTP,
-			                       v6_ptp_var);
-		}
-
 		if (dns_strv && n_dns > 0) {
 			GVariantBuilder dns6_builder;
 			gboolean has_dns6 = FALSE;
@@ -263,6 +252,7 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 	 * become active. */
 	if (priv->sent_ip4 == priv->has_ip4 && priv->sent_ip6 == priv->has_ip6) {
 		clear_connect_timeout (priv);
+		priv->stopping_for_retry = FALSE;
 		priv->connected = TRUE;
 	}
 }
@@ -278,6 +268,20 @@ handle_state_changed (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 
 	switch (new_state) {
 	case NM_TRUSTTUNNEL_STATE_DISCONNECTED:
+		if (priv->stop_requested) {
+			/* The plugin stopped the session itself after the timeout, the
+			 * failure has already been reported to NetworkManager. */
+			g_message ("trusttunneld reports the session stopped");
+			break;
+		}
+
+		if (priv->stopping_for_retry) {
+			/* This is the session the plugin stopped itself to repeat the
+			 * Start request, it is not a failure. */
+			g_message ("trusttunneld reports the session stopped, the request is repeated");
+			break;
+		}
+
 		clear_connect_timeout (priv);
 
 		if (priv->connected) {
@@ -312,8 +316,8 @@ handle_state_changed (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 }
 
 static void
-on_dbus_signal (GDBusProxy *proxy,
-                const gchar *sender_name,
+on_dbus_signal (GDBusProxy *proxy G_GNUC_UNUSED,
+                const gchar *sender_name G_GNUC_UNUSED,
                 const gchar *signal_name,
                 GVariant *parameters,
                 gpointer user_data)
@@ -336,6 +340,10 @@ connect_timeout_cb (gpointer user_data)
 	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
 
 	priv->connect_timeout_id = 0;
+	/* Abort the connect sequence. A Start request or a retry that is still in
+	 * flight must not start a session anymore, the failure is reported to
+	 * NetworkManager right below. */
+	priv->aborted = TRUE;
 	g_warning ("Timeout waiting for the network configuration from trusttunneld");
 
 	if (priv->proxy) {
@@ -351,6 +359,34 @@ connect_timeout_cb (gpointer user_data)
 }
 
 static void
+on_stop_reply (GObject *source, GAsyncResult *result, gpointer user_data)
+{
+	NMTrusttunnelPlugin *plugin = NM_TRUSTTUNNEL_PLUGIN (user_data);
+	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
+	GError *error = NULL;
+	GVariant *reply;
+
+	reply = g_dbus_proxy_call_finish (G_DBUS_PROXY (source), result, &error);
+	if (!reply) {
+		g_warning ("Failed to invoke Stop on trusttunneld: %s",
+		           error ? error->message : "unknown");
+		g_clear_error (&error);
+	} else {
+		guint32 err_code = 0;
+		g_variant_get (reply, "(u)", &err_code);
+		g_variant_unref (reply);
+		if (err_code != NM_TRUSTTUNNEL_ERROR_SUCCESS)
+			g_warning ("trusttunneld rejected the Stop request with error code %u", err_code);
+	}
+
+	if (priv->aborted)
+		return;
+
+	/* The stale session is gone, try to start ours. */
+	start_session (plugin);
+}
+
+static void
 on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 {
 	NMTrusttunnelPlugin *plugin = NM_TRUSTTUNNEL_PLUGIN (user_data);
@@ -359,13 +395,12 @@ on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 	GVariant *reply;
 	guint32 err_code = 0;
 
-	if (priv->aborted)
-		return;
-
 	reply = g_dbus_proxy_call_finish (G_DBUS_PROXY (source), result, &error);
 	if (!reply) {
 		g_warning ("Failed to invoke Start on trusttunneld: %s", error->message);
 		g_clear_error (&error);
+		if (priv->aborted)
+			return;
 		clear_connect_timeout (priv);
 		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
 		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
@@ -375,11 +410,51 @@ on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 	g_variant_get (reply, "(u)", &err_code);
 	g_variant_unref (reply);
 
+	if (priv->aborted) {
+		/* The request was aborted while it was in flight. The daemon may
+		 * have started a session nevertheless, tear it down. */
+		if (err_code == NM_TRUSTTUNNEL_ERROR_SUCCESS) {
+			g_message ("The Start request was aborted, stopping the session");
+			g_dbus_proxy_call (priv->proxy,
+			                   "Stop",
+			                   NULL,
+			                   G_DBUS_CALL_FLAGS_NONE,
+			                   NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC * 1000,
+			                   priv->cancellable,
+			                   NULL,
+			                   NULL);
+		}
+		return;
+	}
+
+	if (err_code == NM_TRUSTTUNNEL_ERROR_ALREADY_RUNNING) {
+		if (!priv->start_retried) {
+			/* The daemon keeps a single session, a session left over by a
+			 * crashed client is stopped and the request is repeated once. */
+			priv->start_retried = TRUE;
+			priv->stopping_for_retry = TRUE;
+			g_message ("trusttunneld reports a running session, stopping it and retrying");
+			g_dbus_proxy_call (priv->proxy,
+			                   "Stop",
+			                   NULL,
+			                   G_DBUS_CALL_FLAGS_NONE,
+			                   NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC * 1000,
+			                   priv->cancellable,
+			                   on_stop_reply,
+			                   plugin);
+			return;
+		}
+
+		g_warning ("trusttunneld still reports a running session after it was stopped");
+		priv->stopping_for_retry = FALSE;
+		clear_connect_timeout (priv);
+		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
+		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
+		return;
+	}
+
 	if (err_code != NM_TRUSTTUNNEL_ERROR_SUCCESS) {
 		switch (err_code) {
-		case NM_TRUSTTUNNEL_ERROR_ALREADY_RUNNING:
-			g_warning ("trusttunneld refused the Start request: a session is already running");
-			break;
 		case NM_TRUSTTUNNEL_ERROR_INVALID_CONFIG:
 			g_warning ("trusttunneld refused the Start request: the configuration is invalid");
 			break;
@@ -387,18 +462,21 @@ on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 			g_warning ("trusttunneld refused the Start request with error code %u", err_code);
 			break;
 		}
+		priv->stopping_for_retry = FALSE;
 		clear_connect_timeout (priv);
 		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
 		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
 		return;
 	}
+
+	priv->stopping_for_retry = FALSE;
+	g_clear_pointer (&priv->pending_toml, g_free);
 }
 
 static void
 start_session (NMTrusttunnelPlugin *plugin)
 {
 	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
-	char *toml_config;
 
 	if (priv->aborted)
 		return;
@@ -410,8 +488,7 @@ start_session (NMTrusttunnelPlugin *plugin)
 		return;
 	}
 
-	toml_config = g_steal_pointer (&priv->pending_toml);
-	if (!toml_config) {
+	if (!priv->pending_toml) {
 		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
 		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
 		return;
@@ -420,13 +497,12 @@ start_session (NMTrusttunnelPlugin *plugin)
 	g_message ("Sending Start command to trusttunneld...");
 	g_dbus_proxy_call (priv->proxy,
 	                   "Start",
-	                   g_variant_new ("(s)", toml_config),
+	                   g_variant_new ("(s)", priv->pending_toml),
 	                   G_DBUS_CALL_FLAGS_NONE,
 	                   NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC * 1000,
 	                   priv->cancellable,
 	                   on_start_reply,
 	                   plugin);
-	g_free (toml_config);
 }
 
 static void
@@ -518,12 +594,9 @@ real_connect (NMVpnServicePlugin *plugin,
 		return FALSE;
 	}
 
-	config = nm_trusttunnel_config_from_settings (s_vpn);
-	if (!config) {
-		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
-		             "Failed to read the VPN settings");
+	config = nm_trusttunnel_config_from_settings (s_vpn, error);
+	if (!config)
 		return FALSE;
-	}
 
 	priv->pending_toml = nm_trusttunnel_config_to_toml (config, error);
 	priv->allow_ipv6 = config->allow_ipv6;
@@ -539,6 +612,9 @@ real_connect (NMVpnServicePlugin *plugin,
 
 	priv->connected = FALSE;
 	priv->aborted = FALSE;
+	priv->stop_requested = FALSE;
+	priv->start_retried = FALSE;
+	priv->stopping_for_retry = FALSE;
 	priv->has_ip4 = FALSE;
 	priv->has_ip6 = FALSE;
 	priv->sent_ip4 = FALSE;
@@ -640,6 +716,7 @@ real_disconnect (NMVpnServicePlugin *plugin, GError **err)
 	g_clear_pointer (&priv->endpoint_address, g_free);
 	g_clear_pointer (&priv->pending_toml, g_free);
 	priv->connected = FALSE;
+	priv->stopping_for_retry = FALSE;
 	priv->has_ip4 = FALSE;
 	priv->has_ip6 = FALSE;
 	priv->sent_ip4 = FALSE;
@@ -707,9 +784,12 @@ nm_trusttunnel_plugin_dispose (GObject *object)
 	NMTrusttunnelPlugin *plugin = NM_TRUSTTUNNEL_PLUGIN (object);
 	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
 
-	/* Make sure the daemon session is gone when the plugin goes away. */
-	if (priv->connected)
-		nm_vpn_service_plugin_shutdown (NM_VPN_SERVICE_PLUGIN (plugin));
+	/* Stop the daemon session explicitly. nm_vpn_service_plugin_shutdown()
+	 * only disconnects while the plugin state is STARTED or STARTING, so the
+	 * session could outlive the plugin. real_disconnect() is idempotent, it
+	 * only talks to the daemon while the proxy is still around. */
+	if (priv->proxy)
+		real_disconnect (NM_VPN_SERVICE_PLUGIN (plugin), NULL);
 
 	clear_connect_timeout (priv);
 

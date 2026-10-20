@@ -29,7 +29,8 @@ typedef struct {
 	char    *log_level;     /* daemon log level */
 } NMTTrusttunnelConfig;
 
-NMTTrusttunnelConfig *nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn);
+NMTTrusttunnelConfig *nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn,
+                                                         GError **error);
 void                  nm_trusttunnel_config_free        (NMTTrusttunnelConfig *config);
 
 char                 *nm_trusttunnel_config_to_toml      (const NMTTrusttunnelConfig *config,

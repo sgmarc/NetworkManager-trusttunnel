@@ -1,4 +1,4 @@
-AC_PREREQ(2.52)
+AC_PREREQ(2.70)
 
 AC_INIT(NetworkManager-trusttunnel, 0.1.0, https://github.com/AdguardTeam/TrustTunnelClient, NetworkManager-trusttunnel)
 AM_INIT_AUTOMAKE([1.9 subdir-objects tar-ustar no-dist-gzip dist-xz foreign])
@@ -14,16 +14,12 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_INSTALL
 LT_INIT([disable-static])
-AC_PATH_PROG(GLIB_COMPILE_RESOURCES, glib-compile-resources)
 
 dnl Required headers
-AC_HEADER_STDC
 AC_CHECK_HEADERS(fcntl.h paths.h sys/ioctl.h sys/time.h syslog.h unistd.h)
 
 AC_TYPE_MODE_T
 AC_TYPE_PID_T
-AC_HEADER_TIME
-AC_GNU_SOURCE
 
 AC_FUNC_MEMCMP
 AC_CHECK_FUNCS(select socket uname)

@@ -86,6 +86,13 @@ toml_value_length (const char *line)
 	return len;
 }
 
+/* Minimal TOML scanner used to inspect the listener table of an external
+ * configuration file. It only understands the subset of TOML that the
+ * listener table is written in: table headers, plain key/value pairs and
+ * comments. Multi line arrays and literal strings are not supported and are
+ * not detected as such. A full parser is not needed here, the daemon
+ * validates the whole document anyway. */
+
 /* Check whether the line is a table header for @name. */
 static gboolean
 toml_line_is_table (const char *line, const char *name)
@@ -213,12 +220,33 @@ parse_port (const char *value, guint16 *out_port)
 	return TRUE;
 }
 
+/* Parse a boolean value as it is accepted for the allow-ipv6 setting.
+ * Returns FALSE if the value is not a valid boolean. */
 static gboolean
-parse_bool (const char *value)
+parse_bool (const char *value, gboolean *out_bool)
 {
-	return value
-	       && (g_ascii_strcasecmp (value, "true") == 0 || g_ascii_strcasecmp (value, "yes") == 0
-	           || g_ascii_strcasecmp (value, "1") == 0);
+	static const char *const true_values[] = { "true", "yes", "on", "1", NULL };
+	static const char *const false_values[] = { "false", "no", "off", "0", NULL };
+	guint i;
+
+	if (!value || !*value)
+		return FALSE;
+
+	for (i = 0; true_values[i]; i++) {
+		if (g_ascii_strcasecmp (value, true_values[i]) == 0) {
+			*out_bool = TRUE;
+			return TRUE;
+		}
+	}
+
+	for (i = 0; false_values[i]; i++) {
+		if (g_ascii_strcasecmp (value, false_values[i]) == 0) {
+			*out_bool = FALSE;
+			return TRUE;
+		}
+	}
+
+	return FALSE;
 }
 
 /* Check whether a raw TOML array value is empty. A value that is not an
@@ -261,7 +289,8 @@ is_valid_log_level (const char *level)
 	return FALSE;
 }
 
-/* Normalize the upstream protocol to a value the daemon understands. */
+/* Normalize the upstream protocol to a value the daemon understands.
+ * Returns NULL if the protocol is not supported. */
 static char *
 normalize_protocol (const char *protocol)
 {
@@ -308,12 +337,13 @@ split_dns_servers (const char *dns_servers)
 }
 
 NMTTrusttunnelConfig *
-nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn)
+nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn, GError **error)
 {
 	NMTTrusttunnelConfig *config;
 	const char *value;
 
 	g_return_val_if_fail (NM_IS_SETTING_VPN (s_vpn), NULL);
+	g_return_val_if_fail (!error || *error == NULL, NULL);
 
 	config = g_new0 (NMTTrusttunnelConfig, 1);
 	config->port = NM_TRUSTTUNNEL_DEFAULT_PORT;
@@ -354,10 +384,14 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn)
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL);
 	if (value && *value) {
 		char *protocol = normalize_protocol (value);
-		if (protocol) {
-			g_free (config->protocol);
-			config->protocol = protocol;
+		if (!protocol) {
+			g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+			             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_PROTOCOL);
+			nm_trusttunnel_config_free (config);
+			return NULL;
 		}
+		g_free (config->protocol);
+		config->protocol = protocol;
 	}
 
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CUSTOM_SNI);
@@ -372,8 +406,16 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn)
 	config->dns_servers = split_dns_servers (value);
 
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ALLOW_IPV6);
-	if (value && *value)
-		config->allow_ipv6 = parse_bool (value);
+	if (value && *value) {
+		gboolean allow_ipv6;
+		if (!parse_bool (value, &allow_ipv6)) {
+			g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+			             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_ALLOW_IPV6);
+			nm_trusttunnel_config_free (config);
+			return NULL;
+		}
+		config->allow_ipv6 = allow_ipv6;
+	}
 
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_LOG_LEVEL);
 	if (value && *value) {
@@ -467,6 +509,8 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 	toml = g_string_new (NULL);
 	g_string_append_printf (toml, "loglevel = \"%s\"\n", escaped_log_level);
 	g_string_append (toml, "vpn_mode = \"general\"\n");
+	/* NetworkManager owns the routing, a client side kill switch would
+	 * conflict with the routes and the DNS servers it applies itself. */
 	g_string_append (toml, "killswitch_enabled = false\n");
 	g_string_append (toml, "post_quantum_group_enabled = true\n");
 	g_string_append (toml, "exclusions = []\n\n");
@@ -506,6 +550,10 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 		g_string_append (toml, "]\n");
 	} else {
 		guint i;
+		/* The daemon falls back to its own default resolvers when the list
+		 * is empty, and those are exactly the addresses it reports in the
+		 * NetworkReady signal. They are pinned here on purpose so that the
+		 * plugin and the daemon agree on the resolvers of the session. */
 		g_string_append (toml, "dns_upstreams = [");
 		for (i = 0; default_dns_servers[i]; i++) {
 			if (i > 0)

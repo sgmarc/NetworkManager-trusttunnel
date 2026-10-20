@@ -1,0 +1,40 @@
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
+/* nm-trusttunnel-config.h - TrustTunnel configuration model and TOML serializer */
+
+#ifndef NM_TRUSTTUNNEL_CONFIG_H
+#define NM_TRUSTTUNNEL_CONFIG_H
+
+#include <glib.h>
+#include <NetworkManager.h>
+
+/**
+ * NMTTrusttunnelConfig:
+ *
+ * Platform independent representation of a TrustTunnel session configuration.
+ * It is the single source of truth shared by the service plugin, the GNOME
+ * editor and the import/export code.
+ */
+typedef struct {
+	char    *config_file;   /* external TOML file, takes precedence over the fields below */
+	char    *server;        /* endpoint host name used for the TLS session */
+	char    *address;       /* endpoint address (host or IP literal), without port */
+	guint16  port;          /* endpoint port */
+	char    *username;      /* endpoint user name */
+	char    *password;      /* endpoint password */
+	char    *protocol;      /* upstream protocol: http2, http3 or auto */
+	char    *custom_sni;    /* custom TLS SNI, or NULL */
+	char    *cert_pem;      /* endpoint certificate in PEM format, or NULL */
+	char   **dns_servers;   /* NULL terminated list of DNS upstreams, or NULL */
+	gboolean allow_ipv6;    /* whether IPv6 may be used for the session */
+	char    *log_level;     /* daemon log level */
+} NMTTrusttunnelConfig;
+
+NMTTrusttunnelConfig *nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn);
+void                  nm_trusttunnel_config_free        (NMTTrusttunnelConfig *config);
+
+char                 *nm_trusttunnel_config_to_toml      (const NMTTrusttunnelConfig *config,
+                                                         GError **error);
+char                 *nm_trusttunnel_config_file_to_toml (const char *path,
+                                                         GError **error);
+
+#endif /* NM_TRUSTTUNNEL_CONFIG_H */

@@ -44,6 +44,13 @@ nm-trusttunnel-service
 nm-trusttunnel-service.name
 NetworkManager-trusttunnel-*.tar*
 
+# Autotools test artifacts
+test-driver
+test-suite.log
+tests/test-config
+tests/*.log
+tests/*.trs
+
 # Editor backups and tags
 *~
 *.swp

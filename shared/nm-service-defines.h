@@ -31,4 +31,35 @@
 #define NM_TRUSTTUNNEL_DEFAULT_LOG_LEVEL     "info"
 #define NM_TRUSTTUNNEL_DEFAULT_CLIENT_BINARY "trusttunnel_client"
 
+/* Upstream protocol values accepted by trusttunneld.
+ * See TrustTunnelClient/trusttunnel/src/config.cpp (UPSTREAM_PROTO_MAP).
+ * Note that "quic" is not a daemon value, it is a legacy alias for "http3". */
+#define NM_TRUSTTUNNEL_PROTOCOL_HTTP2         "http2"
+#define NM_TRUSTTUNNEL_PROTOCOL_HTTP3         "http3"
+#define NM_TRUSTTUNNEL_PROTOCOL_AUTO          "auto"
+
+/* Session states reported by the StateChanged(i) signal of trusttunneld.
+ * See TrustTunnelClient/platform/linux/src/dbus_interface.h (VpnState). */
+typedef enum {
+	NM_TRUSTTUNNEL_STATE_DISCONNECTED    = 0,
+	NM_TRUSTTUNNEL_STATE_CONNECTING      = 1,
+	NM_TRUSTTUNNEL_STATE_CONNECTED        = 2,
+	NM_TRUSTTUNNEL_STATE_WAITING_RECOVERY = 3,
+	NM_TRUSTTUNNEL_STATE_RECOVERING       = 4,
+	NM_TRUSTTUNNEL_STATE_WAITING_NETWORK  = 5,
+} NMTTrusttunnelState;
+
+/* Error codes returned by the Start(s)/Stop() methods of trusttunneld.
+ * See TrustTunnelClient/platform/linux/src/dbus_interface.h (VpnError). */
+typedef enum {
+	NM_TRUSTTUNNEL_ERROR_SUCCESS         = 0,
+	NM_TRUSTTUNNEL_ERROR_ALREADY_RUNNING = 1,
+	NM_TRUSTTUNNEL_ERROR_INVALID_CONFIG  = 2,
+} NMTTrusttunnelError;
+
+/* Timeouts (seconds) used by the plugin. */
+#define NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC   15
+#define NM_TRUSTTUNNEL_STOP_TIMEOUT_SEC    3
+#define NM_TRUSTTUNNEL_CONNECT_TIMEOUT_SEC 30
+
 #endif /* NM_TRUSTTUNNEL_SERVICE_DEFINES_H */

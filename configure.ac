@@ -37,6 +37,11 @@ AC_SUBST([ACLOCAL_AMFLAGS])
 dnl Options
 AC_ARG_WITH(gnome, AS_HELP_STRING([--without-gnome], [Build without GNOME support]))
 AM_CONDITIONAL(WITH_GNOME, test x"$with_gnome" != xno)
+if test x"$with_gnome" = xno; then
+    with_gnome=no
+else
+    with_gnome=yes
+fi
 
 AC_ARG_WITH(gtk4, AS_HELP_STRING([--with-gtk4], [Build with GTK4 / libnma-gtk4 support]), [], [with_gtk4=no])
 AM_CONDITIONAL(WITH_GTK4, test x"$with_gtk4" = xyes)
@@ -58,7 +63,6 @@ AC_SUBST(LIBNM_LIBS)
 if test x"$with_gnome" != xno; then
     PKG_CHECK_MODULES(GTK, gtk+-3.0 >= 3.4)
     PKG_CHECK_MODULES(LIBNMA, libnma >= 1.2.0)
-    PKG_CHECK_MODULES(LIBSECRET, libsecret-1)
 fi
 
 if test x"$with_gtk4" = xyes; then
@@ -78,6 +82,7 @@ AC_SUBST(NM_PLUGIN_DIR)
 if test x"$enable_absolute_paths" = xyes; then
     NM_PLUGIN_DIR_NAME_FILE="${NM_PLUGIN_DIR}/"
 else
+    enable_absolute_paths=no
     NM_PLUGIN_DIR_NAME_FILE=""
 fi
 AC_SUBST(NM_PLUGIN_DIR_NAME_FILE)
@@ -91,6 +96,7 @@ echo ""
 echo "Configuration summary:"
 echo "  GNOME support: $with_gnome"
 echo "  GTK4 support:  $with_gtk4"
-echo "  VPN dir:       $NM_VPN_SERVICE_DIR"
-echo "  Plugin dir:    $NM_PLUGIN_DIR"
+echo "  Absolute paths: $enable_absolute_paths"
+echo "  VPN dir:       `echo $NM_VPN_SERVICE_DIR | sed "s|\\\${prefix}|$prefix|g"`"
+echo "  Plugin dir:    `echo $NM_PLUGIN_DIR | sed "s|\\\${prefix}|$prefix|g"`"
 echo ""

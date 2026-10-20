@@ -6,9 +6,13 @@ dbusservice_DATA = nm-trusttunnel-service.conf
 nmvpnservicedir = $(NM_VPN_SERVICE_DIR)
 nmvpnservice_DATA = nm-trusttunnel-service.name
 
+# The plugin directory in the .name file is left empty by default, so that
+# NetworkManager resolves the plugin relative to its own plugin directory.
+# With --enable-absolute-paths the absolute installation path is written
+# instead, which is handy for development builds.
 nm-trusttunnel-service.name: $(srcdir)/nm-trusttunnel-service.name.in
-	sed -e 's|[@]LIBEXECDIR[@]|$(libexecdir)|g' \
-	    -e 's|[@]PLUGINDIR[@]|$(libdir)/NetworkManager|g' \
+	$(AM_V_GEN) sed -e 's|[@]LIBEXECDIR[@]|$(libexecdir)|g' \
+	    -e 's|[@]PLUGINDIR[@]/|@NM_PLUGIN_DIR_NAME_FILE@|g' \
 	    $< >$@
 
 CLEANFILES = $(nmvpnservice_DATA)
@@ -19,6 +23,27 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir) \
 	-I$(top_srcdir)/shared
 
+###############################################################################
+# Shared code
+###############################################################################
+
+noinst_LTLIBRARIES = shared/libnm-trusttunnel-core.la
+
+shared_libnm_trusttunnel_core_la_SOURCES = \
+	shared/nm-trusttunnel-config.c \
+	shared/nm-trusttunnel-config.h \
+	shared/nm-service-defines.h
+
+shared_libnm_trusttunnel_core_la_CFLAGS = \
+	$(LIBNM_CFLAGS)
+
+shared_libnm_trusttunnel_core_la_LIBADD = \
+	$(LIBNM_LIBS)
+
+###############################################################################
+# Backend VPN daemon
+###############################################################################
+
 libexec_PROGRAMS = nm-trusttunnel-service
 
 nm_trusttunnel_service_SOURCES = \
@@ -27,6 +52,7 @@ nm_trusttunnel_service_SOURCES = \
 	shared/nm-service-defines.h
 
 nm_trusttunnel_service_LDADD = \
+	shared/libnm-trusttunnel-core.la \
 	$(LIBNM_LIBS) \
 	$(GIO_LIBS)
 
@@ -77,7 +103,30 @@ properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_LDFLAGS = \
 	-avoid-version -module
 endif
 
+# The GTK4 editor is built from the same sources as the GTK3 one. It is added
+# together with the migration of the user interface to a GtkBuilder file,
+# because the current editor uses GTK3 only API.
+
+###############################################################################
+# Tests
+###############################################################################
+
+check_PROGRAMS = tests/test-config
+
+TESTS = $(check_PROGRAMS)
+
+tests_test_config_SOURCES = \
+	tests/test-config.c
+
+tests_test_config_CFLAGS = \
+	$(LIBNM_CFLAGS)
+
+tests_test_config_LDADD = \
+	shared/libnm-trusttunnel-core.la \
+	$(LIBNM_LIBS)
+
 EXTRA_DIST = \
 	nm-trusttunnel-service.name.in \
 	nm-trusttunnel-service.conf \
-	autogen.sh
+	autogen.sh \
+	shared/nm-default.h

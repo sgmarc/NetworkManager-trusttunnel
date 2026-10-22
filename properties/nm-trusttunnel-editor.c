@@ -21,7 +21,6 @@ typedef struct {
 	GtkWidget *protocol_combo;
 	GtkWidget *sni_entry;
 	GtkWidget *client_random_entry;
-	GtkWidget *dns_view;
 	GtkWidget *cert_entry;
 	char *cert_pem;
 	GtkWidget *username_entry;
@@ -50,16 +49,6 @@ set_data_item (NMSettingVpn *s_vpn, const char *key, const char *value)
 		nm_setting_vpn_add_data_item (s_vpn, key, value);
 	else
 		nm_setting_vpn_remove_data_item (s_vpn, key);
-}
-
-static char *
-dns_view_get_text (TrusttunnelEditorPrivate *priv)
-{
-	GtkTextBuffer *buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (priv->dns_view));
-	GtkTextIter start, end;
-
-	gtk_text_buffer_get_bounds (buffer, &start, &end);
-	return gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
 }
 
 static gboolean
@@ -109,28 +98,6 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM, priv->cert_pem);
 
-	{
-		g_autofree char *dns_text = dns_view_get_text (priv);
-		g_auto(GStrv) lines = g_strsplit (dns_text, "\n", -1);
-		g_autoptr(GPtrArray) list = g_ptr_array_new_with_free_func (g_free);
-		guint i;
-
-		for (i = 0; lines[i]; i++) {
-			char *item = g_strstrip (lines[i]);
-
-			if (*item)
-				g_ptr_array_add (list, g_strdup (item));
-		}
-		g_ptr_array_add (list, NULL);
-
-		if (list->len > 1) {
-			set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_DNS_SERVERS,
-			               g_strjoinv (",", (char **) list->pdata));
-		} else {
-			nm_setting_vpn_remove_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_DNS_SERVERS);
-		}
-	}
-
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME,
 	               entry_get_text (priv->username_entry));
 
@@ -151,14 +118,6 @@ entry_changed_cb (GtkEditable *editable, gpointer user_data)
 
 	/* NMVpnEditor consumers (nm-connection-editor, gnome-control-center)
 	 * enable their Apply button when this signal is emitted. */
-	g_signal_emit_by_name (self, "changed");
-}
-
-static void
-dns_buffer_changed_cb (GtkTextBuffer *buffer, gpointer user_data)
-{
-	TrusttunnelEditor *self = TRUSTTUNNEL_EDITOR (user_data);
-
 	g_signal_emit_by_name (self, "changed");
 }
 
@@ -338,16 +297,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_grid_attach (GTK_GRID (grid), priv->client_random_entry, 1, row, 1, 1);
 	row++;
 
-	label = gtk_label_new (_("DNS servers:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	gtk_widget_set_valign (label, GTK_ALIGN_START);
-	priv->dns_view = gtk_text_view_new ();
-	gtk_text_view_set_accepts_tab (GTK_TEXT_VIEW (priv->dns_view), FALSE);
-	gtk_widget_set_size_request (priv->dns_view, -1, 60);
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->dns_view, 1, row, 1, 1);
-	row++;
-
 	label = gtk_label_new (_("Certificate:"));
 	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	{
@@ -425,15 +374,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		if (val)
 			entry_set_text (priv->client_random_entry, val);
 
-		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_DNS_SERVERS);
-		if (val && *val) {
-			g_auto(GStrv) list = g_strsplit (val, ",", -1);
-			g_autofree char *text = g_strjoinv ("\n", list);
-
-			gtk_text_buffer_set_text (gtk_text_view_get_buffer (GTK_TEXT_VIEW (priv->dns_view)),
-			                          text, -1);
-		}
-
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM);
 		if (val && *val) {
 			priv->cert_pem = g_strdup (val);
@@ -457,8 +397,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	g_signal_connect (priv->protocol_combo, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->sni_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->client_random_entry, "changed", G_CALLBACK (entry_changed_cb), self);
-	g_signal_connect (gtk_text_view_get_buffer (GTK_TEXT_VIEW (priv->dns_view)),
-	                  "changed", G_CALLBACK (dns_buffer_changed_cb), self);
 	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->password_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 

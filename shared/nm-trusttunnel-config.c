@@ -49,7 +49,7 @@ toml_escape (const char *str)
 			g_string_append (res, "\\r");
 			break;
 		default:
-			if (*p < 0x20) {
+			if (*p < 0x20 || *p == 0x7f) {
 				g_string_append_printf (res, "\\u%04x", *p);
 			} else {
 				g_string_append_c (res, *p);
@@ -57,6 +57,56 @@ toml_escape (const char *str)
 			break;
 		}
 		p++;
+	}
+
+	return g_string_free (res, FALSE);
+}
+
+/* Reject values that are not a plausible host name or IP literal. Escaping
+ * already prevents TOML injection, but a newline or a quote in the endpoint
+ * host always means the connection profile is broken, so report it early. */
+static gboolean
+is_valid_endpoint_host (const char *host)
+{
+	const unsigned char *p;
+
+	if (!host || !*host)
+		return FALSE;
+
+	for (p = (const unsigned char *) host; *p; p++) {
+		if (*p <= 0x20 || *p == 0x7f)
+			return FALSE;
+		switch (*p) {
+		case '"':
+		case '\\':
+		case '#':
+		case '/':
+		case '=':
+			return FALSE;
+		default:
+			break;
+		}
+	}
+
+	return TRUE;
+}
+
+/* Convert CRLF and lone CR to LF so that the PEM certificate is stored in a
+ * single canonical form before it is escaped into a TOML basic string. */
+static char *
+normalize_newlines (const char *str)
+{
+	GString *res = g_string_sized_new (strlen (str) + 1);
+	const char *p;
+
+	for (p = str; *p; p++) {
+		if (*p == '\r') {
+			if (p[1] == '\n')
+				continue;
+			g_string_append_c (res, '\n');
+		} else {
+			g_string_append_c (res, *p);
+		}
 	}
 
 	return g_string_free (res, FALSE);
@@ -289,6 +339,25 @@ is_valid_log_level (const char *level)
 	return FALSE;
 }
 
+/* trusttunneld matches the log level case-sensitively, so store it in the
+ * canonical lowercase form instead of rejecting an otherwise valid value. */
+static char *
+normalize_log_level (const char *level)
+{
+	char *normalized;
+
+	if (!level || !*level)
+		return NULL;
+
+	normalized = g_ascii_strdown (level, -1);
+	if (!is_valid_log_level (normalized)) {
+		g_free (normalized);
+		return NULL;
+	}
+
+	return normalized;
+}
+
 /* Normalize the upstream protocol to a value the daemon understands.
  * Returns NULL if the protocol is not supported. */
 static char *
@@ -352,8 +421,19 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn, GError **error)
 	config->log_level = g_strdup (NM_TRUSTTUNNEL_DEFAULT_LOG_LEVEL);
 
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CONFIG_FILE);
-	if (value && *value)
-		config->config_file = g_strdup (value);
+	if (value && *value) {
+		/* The service runs as root. Reading a path supplied by the connection
+		 * profile would let any user make it read an arbitrary file, block on
+		 * a FIFO or win a symlink race. Importing a TOML file is a client-side
+		 * operation and belongs to the editor, not to this process. */
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             "The \"%s\" setting is not supported: the VPN service must not read "
+		             "files supplied by a connection profile. Import the configuration into "
+		             "the connection instead",
+		             NM_TRUSTTUNNEL_KEY_CONFIG_FILE);
+		nm_trusttunnel_config_free (config);
+		return NULL;
+	}
 
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER);
 	if (value)
@@ -419,8 +499,16 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn, GError **error)
 
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_LOG_LEVEL);
 	if (value && *value) {
+		char *level = normalize_log_level (value);
+
+		if (!level) {
+			g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+			             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_LOG_LEVEL);
+			nm_trusttunnel_config_free (config);
+			return NULL;
+		}
 		g_free (config->log_level);
-		config->log_level = g_strdup (value);
+		config->log_level = level;
 	}
 
 	return config;
@@ -445,15 +533,21 @@ nm_trusttunnel_config_free (NMTTrusttunnelConfig *config)
 	g_free (config);
 }
 
-/* Append "host:port" as a TOML array element, bracketing bare IPv6 literals. */
+/* Append "host:port" as a TOML array element, bracketing bare IPv6 literals.
+ * The host is escaped: a quote or a newline must never terminate the string
+ * and inject additional TOML tables (for example another listener). */
 static void
 append_endpoint_address (GString *toml, const char *host, guint16 port)
 {
+	char *escaped_host = toml_escape (host);
+
 	if (strchr (host, ':') != NULL && host[0] != '[') {
-		g_string_append_printf (toml, "\"[%s]:%u\"", host, port);
+		g_string_append_printf (toml, "\"[%s]:%u\"", escaped_host, port);
 	} else {
-		g_string_append_printf (toml, "\"%s:%u\"", host, port);
+		g_string_append_printf (toml, "\"%s:%u\"", escaped_host, port);
 	}
+
+	g_free (escaped_host);
 }
 
 static char *
@@ -498,7 +592,20 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 		return NULL;
 	}
 
+	if (!is_valid_endpoint_host (config->server)) {
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_SERVER);
+		return NULL;
+	}
+
 	host = (config->address && *config->address) ? config->address : config->server;
+	if (!is_valid_endpoint_host (host)) {
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             "Invalid value for setting \"%s\"",
+		             (config->address && *config->address) ? NM_TRUSTTUNNEL_KEY_ADDRESS
+		                                                   : NM_TRUSTTUNNEL_KEY_SERVER);
+		return NULL;
+	}
 
 	escaped_server = toml_escape (config->server);
 	escaped_username = toml_escape (config->username);
@@ -528,11 +635,15 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 		g_string_append_printf (toml, "custom_sni = \"%s\"\n", escaped_custom_sni);
 
 	if (config->cert_pem && *config->cert_pem) {
-		char **lines = g_strsplit (config->cert_pem, "\r\n", -1);
-		char *joined = g_strjoinv ("\n", lines);
-		g_strfreev (lines);
-		g_string_append_printf (toml, "certificate = \"\"\"%s\"\"\"\n", joined);
-		g_free (joined);
+		/* A multiline literal string would be terminated by a """ sequence in
+		 * the certificate itself. A regular basic string with escaped
+		 * newlines has no such terminator and is still valid TOML. */
+		char *normalized = normalize_newlines (config->cert_pem);
+		char *escaped_cert = toml_escape (normalized);
+
+		g_string_append_printf (toml, "certificate = \"%s\"\n", escaped_cert);
+		g_free (escaped_cert);
+		g_free (normalized);
 	}
 
 	g_string_append_printf (toml, "upstream_protocol = \"%s\"\n", config->protocol);
@@ -583,8 +694,12 @@ nm_trusttunnel_config_to_toml (const NMTTrusttunnelConfig *config, GError **erro
 {
 	g_return_val_if_fail (config != NULL, NULL);
 
-	if (config->config_file && *config->config_file)
-		return nm_trusttunnel_config_file_to_toml (config->config_file, error);
+	if (config->config_file && *config->config_file) {
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             "The \"%s\" setting is not supported by the VPN service",
+		             NM_TRUSTTUNNEL_KEY_CONFIG_FILE);
+		return NULL;
+	}
 
 	return build_toml (config, error);
 }

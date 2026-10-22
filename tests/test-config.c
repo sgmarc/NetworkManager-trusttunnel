@@ -406,7 +406,102 @@ test_log_level (void)
 	g_free (toml);
 	g_clear_error (&error);
 
+	/* The daemon matches the level case-sensitively, so normalize instead of
+	 * rejecting an otherwise valid value. */
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_LOG_LEVEL, "DEBUG");
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (strstr (toml, "loglevel = \"debug\""));
+	g_free (toml);
+	g_clear_error (&error);
+
 	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_LOG_LEVEL, "verbose");
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_null (toml);
+	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
+	g_clear_error (&error);
+
+	g_object_unref (s_vpn);
+}
+
+static void
+test_address_injection (void)
+{
+	NMSettingVpn *s_vpn = new_vpn_setting ();
+	GError *error = NULL;
+	char *toml;
+
+	/* A newline and a quote in the address must never reach the TOML string
+	 * unescaped, where they could open an attacker controlled [listener]. */
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ADDRESS,
+	                              "vpn.example.com\"\n[listener.socks]\naddress = \"127.0.0.1:1");
+
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_null (toml);
+	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
+	g_clear_error (&error);
+
+	g_object_unref (s_vpn);
+}
+
+static void
+test_invalid_host (void)
+{
+	NMSettingVpn *s_vpn = new_vpn_setting ();
+	GError *error = NULL;
+	char *toml;
+
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ADDRESS, "vpn example.com");
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_null (toml);
+	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
+	g_clear_error (&error);
+	g_object_unref (s_vpn);
+
+	/* The hostname field is used as the address when address is empty. */
+	s_vpn = new_vpn_setting ();
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER, "vpn\nexample.com");
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_null (toml);
+	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
+	g_clear_error (&error);
+	g_object_unref (s_vpn);
+}
+
+static void
+test_certificate_escaping (void)
+{
+	NMSettingVpn *s_vpn = new_vpn_setting ();
+	GError *error = NULL;
+	char *toml;
+
+	/* A multiline literal string would be terminated by this sequence. */
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM,
+	                              "-----BEGIN CERTIFICATE-----\n\"\"\"\n[listener.socks]\n"
+	                              "address = \"127.0.0.1:1\"\n-----END CERTIFICATE-----\n");
+
+	toml = build_toml_for (s_vpn, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (toml);
+
+	g_assert_null (strstr (toml, "\"\"\""));
+	g_assert_null (strstr (toml, "\n[listener.socks]"));
+	g_assert_nonnull (strstr (toml, "certificate = \"-----BEGIN CERTIFICATE-----\\n"));
+	g_assert_nonnull (strstr (toml, "managed = false"));
+
+	g_free (toml);
+	g_object_unref (s_vpn);
+}
+
+static void
+test_config_file_rejected (void)
+{
+	NMSettingVpn *s_vpn = new_vpn_setting ();
+	GError *error = NULL;
+	char *toml;
+
+	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CONFIG_FILE, "/etc/passwd");
+
 	toml = build_toml_for (s_vpn, &error);
 	g_assert_null (toml);
 	g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
@@ -438,6 +533,10 @@ main (int argc, char **argv)
 	g_test_add_func ("/config/file-quoted-managed", test_config_file_quoted_managed);
 	g_test_add_func ("/config/file-empty-routes", test_config_file_empty_routes_with_spaces);
 	g_test_add_func ("/config/log-level", test_log_level);
+	g_test_add_func ("/config/address-injection", test_address_injection);
+	g_test_add_func ("/config/invalid-host", test_invalid_host);
+	g_test_add_func ("/config/certificate-escaping", test_certificate_escaping);
+	g_test_add_func ("/config/config-file-rejected", test_config_file_rejected);
 
 	return g_test_run ();
 }

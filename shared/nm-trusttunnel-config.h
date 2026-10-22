@@ -15,7 +15,7 @@
  * editor and the import/export code.
  */
 typedef struct {
-	char    *config_file;   /* external TOML file, takes precedence over the fields below */
+	char    *config_file;   /* unsupported by the service, kept to report a clear error */
 	char    *server;        /* endpoint host name used for the TLS session */
 	char    *address;       /* endpoint address (host or IP literal), without port */
 	guint16  port;          /* endpoint port */
@@ -35,6 +35,8 @@ void                  nm_trusttunnel_config_free        (NMTTrusttunnelConfig *c
 
 char                 *nm_trusttunnel_config_to_toml      (const NMTTrusttunnelConfig *config,
                                                          GError **error);
+/* Read an external TOML file. This may only be called from a user session
+ * (editor or import); the root service must never use it. */
 char                 *nm_trusttunnel_config_file_to_toml (const char *path,
                                                          GError **error);
 

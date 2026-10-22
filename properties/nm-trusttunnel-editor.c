@@ -8,7 +8,6 @@ static void trusttunnel_editor_interface_init (NMVpnEditorInterface *iface_class
 
 typedef struct {
 	GtkWidget *widget;
-	GtkWidget *config_file_entry;
 	GtkWidget *server_entry;
 	GtkWidget *username_entry;
 	GtkWidget *password_entry;
@@ -47,13 +46,6 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 	g_object_set (s_vpn,
 	              NM_SETTING_VPN_SERVICE_TYPE, NM_DBUS_SERVICE_TRUSTTUNNEL,
 	              NULL);
-
-	str = gtk_entry_get_text (GTK_ENTRY (priv->config_file_entry));
-	if (str && strlen (str) > 0) {
-		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CONFIG_FILE, str);
-	} else {
-		nm_setting_vpn_remove_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CONFIG_FILE);
-	}
 
 	str = gtk_entry_get_text (GTK_ENTRY (priv->server_entry));
 	if (str && strlen (str) > 0) {
@@ -106,15 +98,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 
 	int row = 0;
 
-	/* Config File path */
-	GtkWidget *lbl_cfg = gtk_label_new (_("Config File (.toml):"));
-	gtk_widget_set_halign (lbl_cfg, GTK_ALIGN_START);
-	priv->config_file_entry = gtk_entry_new ();
-	gtk_entry_set_placeholder_text (GTK_ENTRY (priv->config_file_entry), "/path/to/trusttunnel_client.toml");
-	gtk_grid_attach (GTK_GRID (grid), lbl_cfg, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->config_file_entry, 1, row, 1, 1);
-	row++;
-
 	/* Server / Hostname */
 	GtkWidget *lbl_srv = gtk_label_new (_("Server:"));
 	gtk_widget_set_halign (lbl_srv, GTK_ALIGN_START);
@@ -163,9 +146,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	/* Populate existing values */
 	if (s_vpn) {
 		const char *val;
-		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CONFIG_FILE);
-		if (val) gtk_entry_set_text (GTK_ENTRY (priv->config_file_entry), val);
-
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER);
 		if (val) gtk_entry_set_text (GTK_ENTRY (priv->server_entry), val);
 

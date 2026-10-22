@@ -22,6 +22,8 @@ typedef struct {
 	GtkWidget *sni_entry;
 	GtkWidget *client_random_entry;
 	GtkWidget *dns_view;
+	GtkWidget *cert_entry;
+	char *cert_pem;
 	GtkWidget *username_entry;
 	GtkWidget *password_entry;
 } TrusttunnelEditorPrivate;
@@ -105,6 +107,8 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM,
 	               entry_get_text (priv->client_random_entry));
 
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM, priv->cert_pem);
+
 	{
 		g_autofree char *dns_text = dns_view_get_text (priv);
 		g_auto(GStrv) lines = g_strsplit (dns_text, "\n", -1);
@@ -155,6 +159,126 @@ dns_buffer_changed_cb (GtkTextBuffer *buffer, gpointer user_data)
 {
 	TrusttunnelEditor *self = TRUSTTUNNEL_EDITOR (user_data);
 
+	g_signal_emit_by_name (self, "changed");
+}
+
+static void
+box_append (GtkBox *box, GtkWidget *child)
+{
+#if GTK_CHECK_VERSION (4, 0, 0)
+	gtk_box_append (box, child);
+#else
+	gtk_box_pack_start (box, child, TRUE, TRUE, 0);
+#endif
+}
+
+static GtkWidget *
+get_toplevel_window (GtkWidget *widget)
+{
+#if GTK_CHECK_VERSION (4, 0, 0)
+	return GTK_WIDGET (gtk_widget_get_root (widget));
+#else
+	return gtk_widget_get_toplevel (widget);
+#endif
+}
+
+static void
+cert_apply_file (TrusttunnelEditor *self, const char *path)
+{
+	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (self);
+	gchar *contents = NULL;
+	gsize len = 0;
+	GError *error = NULL;
+
+	if (!g_file_get_contents (path, &contents, &len, &error)) {
+		g_warning ("failed to read the certificate: %s", error->message);
+		g_error_free (error);
+		return;
+	}
+
+	if (!strstr (contents, "-----BEGIN")) {
+		g_warning ("\"%s\" does not look like a PEM file", path);
+		g_free (contents);
+		return;
+	}
+
+	g_free (priv->cert_pem);
+	priv->cert_pem = contents;
+	entry_set_text (priv->cert_entry, path);
+	g_signal_emit_by_name (self, "changed");
+}
+
+#if GTK_CHECK_VERSION (4, 0, 0)
+
+static void
+cert_open_cb (GObject *source, GAsyncResult *result, gpointer user_data)
+{
+	TrusttunnelEditor *self = TRUSTTUNNEL_EDITOR (user_data);
+	GtkFileDialog *dialog = GTK_FILE_DIALOG (source);
+	GFile *file;
+	GError *error = NULL;
+
+	file = gtk_file_dialog_open_finish (dialog, result, &error);
+	if (file) {
+		char *path = g_file_get_path (file);
+
+		if (path)
+			cert_apply_file (self, path);
+		g_free (path);
+		g_object_unref (file);
+	} else if (!g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED)) {
+		g_warning ("certificate chooser failed: %s", error->message);
+	}
+	g_clear_error (&error);
+	g_object_unref (dialog);
+}
+
+static void
+cert_choose_cb (TrusttunnelEditor *self)
+{
+	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (self);
+	GtkFileDialog *dialog = gtk_file_dialog_new ();
+
+	gtk_file_dialog_open (dialog,
+	                      GTK_WINDOW (get_toplevel_window (priv->cert_entry)),
+	                      NULL,
+	                      cert_open_cb,
+	                      self);
+}
+
+#else
+
+static void
+cert_choose_cb (TrusttunnelEditor *self)
+{
+	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (self);
+	GtkWidget *dialog;
+	gchar *path;
+
+	dialog = gtk_file_chooser_dialog_new (_("Select certificate file"),
+	                                      GTK_WINDOW (get_toplevel_window (priv->cert_entry)),
+	                                      GTK_FILE_CHOOSER_ACTION_OPEN,
+	                                      _("_Cancel"), GTK_RESPONSE_CANCEL,
+	                                      _("_Open"), GTK_RESPONSE_ACCEPT,
+	                                      NULL);
+	if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT) {
+		path = gtk_file_chooser_get_filename (GTK_FILE_CHOOSER (dialog));
+		if (path)
+			cert_apply_file (self, path);
+		g_free (path);
+	}
+	gtk_widget_destroy (dialog);
+}
+
+#endif
+
+static void
+cert_clear_cb (TrusttunnelEditor *self)
+{
+	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (self);
+
+	g_clear_pointer (&priv->cert_pem, g_free);
+	entry_set_text (priv->cert_entry, "");
 	g_signal_emit_by_name (self, "changed");
 }
 
@@ -224,6 +348,27 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_grid_attach (GTK_GRID (grid), priv->dns_view, 1, row, 1, 1);
 	row++;
 
+	label = gtk_label_new (_("Certificate:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	{
+		GtkWidget *box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+		GtkWidget *choose = gtk_button_new_with_mnemonic (_("Choose _file…"));
+		GtkWidget *clear = gtk_button_new_with_mnemonic (_("_Clear"));
+
+		priv->cert_entry = gtk_entry_new ();
+		gtk_editable_set_editable (GTK_EDITABLE (priv->cert_entry), FALSE);
+		gtk_entry_set_placeholder_text (GTK_ENTRY (priv->cert_entry), _("system storage"));
+		gtk_widget_set_hexpand (priv->cert_entry, TRUE);
+		box_append (GTK_BOX (box), priv->cert_entry);
+		box_append (GTK_BOX (box), choose);
+		box_append (GTK_BOX (box), clear);
+		g_signal_connect_swapped (choose, "clicked", G_CALLBACK (cert_choose_cb), self);
+		g_signal_connect_swapped (clear, "clicked", G_CALLBACK (cert_clear_cb), self);
+		gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+		gtk_grid_attach (GTK_GRID (grid), box, 1, row, 1, 1);
+		row++;
+	}
+
 	label = gtk_label_new (_("Username:"));
 	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	priv->username_entry = gtk_entry_new ();
@@ -287,6 +432,12 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 
 			gtk_text_buffer_set_text (gtk_text_view_get_buffer (GTK_TEXT_VIEW (priv->dns_view)),
 			                          text, -1);
+		}
+
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM);
+		if (val && *val) {
+			priv->cert_pem = g_strdup (val);
+			entry_set_text (priv->cert_entry, _("(certificate stored in profile)"));
 		}
 
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME);

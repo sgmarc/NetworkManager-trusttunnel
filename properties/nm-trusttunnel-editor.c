@@ -3,17 +3,22 @@
 #include "nm-trusttunnel-editor.h"
 
 #include <gtk/gtk.h>
-#include <nma-ui-utils.h>
 
 static void trusttunnel_editor_interface_init (NMVpnEditorInterface *iface_class);
+
+#if GTK_CHECK_VERSION (4, 0, 0)
+#define entry_get_text(entry) gtk_editable_get_text (GTK_EDITABLE (entry))
+#define entry_set_text(entry, value) gtk_editable_set_text (GTK_EDITABLE (entry), value)
+#else
+#define entry_get_text(entry) gtk_entry_get_text (GTK_ENTRY (entry))
+#define entry_set_text(entry, value) gtk_entry_set_text (GTK_ENTRY (entry), value)
+#endif
 
 typedef struct {
 	GtkWidget *widget;
 	GtkWidget *server_entry;
 	GtkWidget *username_entry;
 	GtkWidget *password_entry;
-	GtkWidget *protocol_combo;
-	GtkWidget *client_binary_entry;
 } TrusttunnelEditorPrivate;
 
 G_DEFINE_TYPE_EXTENDED (TrusttunnelEditor, trusttunnel_editor, G_TYPE_OBJECT, 0,
@@ -31,12 +36,20 @@ get_widget (NMVpnEditor *iface)
 	return G_OBJECT (priv->widget);
 }
 
+static void
+set_data_item (NMSettingVpn *s_vpn, const char *key, const char *value)
+{
+	if (value && *value)
+		nm_setting_vpn_add_data_item (s_vpn, key, value);
+	else
+		nm_setting_vpn_remove_data_item (s_vpn, key);
+}
+
 static gboolean
 update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 {
 	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (iface);
 	NMSettingVpn *s_vpn;
-	const char *str;
 
 	s_vpn = nm_connection_get_setting_vpn (connection);
 	if (!s_vpn) {
@@ -48,49 +61,29 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 	              NM_SETTING_VPN_SERVICE_TYPE, NM_DBUS_SERVICE_TRUSTTUNNEL,
 	              NULL);
 
-	str = gtk_entry_get_text (GTK_ENTRY (priv->server_entry));
-	if (str && strlen (str) > 0) {
-		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER, str);
-	} else {
-		nm_setting_vpn_remove_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER);
-	}
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER,
+	               entry_get_text (priv->server_entry));
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME,
+	               entry_get_text (priv->username_entry));
 
-	str = gtk_entry_get_text (GTK_ENTRY (priv->username_entry));
-	if (str && strlen (str) > 0) {
-		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME, str);
-	} else {
-		nm_setting_vpn_remove_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME);
-	}
-
-	str = gtk_entry_get_text (GTK_ENTRY (priv->password_entry));
-	if (str && strlen (str) > 0) {
-		nm_setting_vpn_add_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD, str);
-	} else {
-		nm_setting_vpn_remove_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
-	}
-
-	/* Store the user's choice (save in keyring, ask every time, ...) as the
-	 * standard NM secret flag for the password. */
-	nm_setting_set_secret_flags (NM_SETTING (s_vpn),
-	                             NM_TRUSTTUNNEL_KEY_PASSWORD,
-	                             nma_utils_menu_to_secret_flags (priv->password_entry),
-	                             NULL);
-
-	str = gtk_combo_box_text_get_active_text (GTK_COMBO_BOX_TEXT (priv->protocol_combo));
-	if (str && strlen (str) > 0) {
-		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL, str);
-	} else {
-		nm_setting_vpn_remove_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL);
-	}
-
-	str = gtk_entry_get_text (GTK_ENTRY (priv->client_binary_entry));
-	if (str && strlen (str) > 0) {
-		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_BINARY, str);
-	} else {
-		nm_setting_vpn_remove_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_BINARY);
-	}
+	/* Keep it simple for the first prototype: the password is a plain data
+	 * item, exactly like `nmcli ... vpn.data "password=..."` stores it.
+	 * Drop any legacy stored secret so the two never diverge. */
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD,
+	               entry_get_text (priv->password_entry));
+	nm_setting_vpn_remove_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 
 	return TRUE;
+}
+
+static void
+entry_changed_cb (GtkEditable *editable, gpointer user_data)
+{
+	TrusttunnelEditor *self = TRUSTTUNNEL_EDITOR (user_data);
+
+	/* NMVpnEditor consumers (nm-connection-editor, gnome-control-center)
+	 * enable their Apply button when this signal is emitted. */
+	g_signal_emit_by_name (self, "changed");
 }
 
 static void
@@ -98,6 +91,9 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 {
 	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (self);
 	NMSettingVpn *s_vpn = nm_connection_get_setting_vpn (connection);
+	GtkWidget *grid;
+	GtkWidget *label;
+	int row = 0;
 
 	if (!s_vpn) {
 		s_vpn = (NMSettingVpn *) nm_setting_vpn_new ();
@@ -107,98 +103,62 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		nm_connection_add_setting (connection, NM_SETTING (s_vpn));
 	}
 
-	GtkWidget *grid = gtk_grid_new ();
+	grid = gtk_grid_new ();
 	gtk_grid_set_row_spacing (GTK_GRID (grid), 10);
 	gtk_grid_set_column_spacing (GTK_GRID (grid), 12);
+#if !GTK_CHECK_VERSION (4, 0, 0)
 	gtk_container_set_border_width (GTK_CONTAINER (grid), 12);
+#endif
 
-	int row = 0;
-
-	/* Server / Hostname */
-	GtkWidget *lbl_srv = gtk_label_new (_("Server:"));
-	gtk_widget_set_halign (lbl_srv, GTK_ALIGN_START);
+	label = gtk_label_new (_("Server:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	priv->server_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), lbl_srv, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
 	gtk_grid_attach (GTK_GRID (grid), priv->server_entry, 1, row, 1, 1);
 	row++;
 
-	/* Username */
-	GtkWidget *lbl_user = gtk_label_new (_("Username:"));
-	gtk_widget_set_halign (lbl_user, GTK_ALIGN_START);
+	label = gtk_label_new (_("Username:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	priv->username_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), lbl_user, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
 	gtk_grid_attach (GTK_GRID (grid), priv->username_entry, 1, row, 1, 1);
 	row++;
 
-	/* Password */
-	GtkWidget *lbl_pass = gtk_label_new (_("Password:"));
-	GtkWidget *pass_row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-	gtk_widget_set_halign (lbl_pass, GTK_ALIGN_START);
+	label = gtk_label_new (_("Password:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	priv->password_entry = gtk_entry_new ();
 	gtk_entry_set_visibility (GTK_ENTRY (priv->password_entry), FALSE);
-	/* nma_utils_setup_password_storage() adds its menu button to the entry's
-	 * parent, so the entry must live in a box rather than directly in the grid. */
-	gtk_box_pack_start (GTK_BOX (pass_row), priv->password_entry, TRUE, TRUE, 0);
-	gtk_grid_attach (GTK_GRID (grid), lbl_pass, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), pass_row, 1, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->password_entry, 1, row, 1, 1);
 	row++;
-
-	/* Protocol */
-	GtkWidget *lbl_proto = gtk_label_new (_("Protocol:"));
-	gtk_widget_set_halign (lbl_proto, GTK_ALIGN_START);
-	priv->protocol_combo = gtk_combo_box_text_new ();
-	gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http2");
-	gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "quic");
-	gtk_combo_box_set_active (GTK_COMBO_BOX (priv->protocol_combo), 0);
-	gtk_grid_attach (GTK_GRID (grid), lbl_proto, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->protocol_combo, 1, row, 1, 1);
-	row++;
-
-	/* Client Binary Path */
-	GtkWidget *lbl_bin = gtk_label_new (_("Client Binary Path:"));
-	gtk_widget_set_halign (lbl_bin, GTK_ALIGN_START);
-	priv->client_binary_entry = gtk_entry_new ();
-	gtk_entry_set_placeholder_text (GTK_ENTRY (priv->client_binary_entry), "trusttunnel_client (default in PATH)");
-	gtk_grid_attach (GTK_GRID (grid), lbl_bin, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->client_binary_entry, 1, row, 1, 1);
-	row++;
-
-	/* Populate existing values */
-	if (s_vpn) {
-		const char *val;
-		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER);
-		if (val) gtk_entry_set_text (GTK_ENTRY (priv->server_entry), val);
-
-		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME);
-		if (val) gtk_entry_set_text (GTK_ENTRY (priv->username_entry), val);
-
-		val = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
-		if (val) gtk_entry_set_text (GTK_ENTRY (priv->password_entry), val);
-
-		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL);
-		if (val && g_ascii_strcasecmp (val, "quic") == 0) {
-			gtk_combo_box_set_active (GTK_COMBO_BOX (priv->protocol_combo), 1);
-		} else {
-			gtk_combo_box_set_active (GTK_COMBO_BOX (priv->protocol_combo), 0);
-		}
-
-		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_BINARY);
-		if (val) gtk_entry_set_text (GTK_ENTRY (priv->client_binary_entry), val);
-	}
 
 	{
-		NMSettingSecretFlags flags = NM_SETTING_SECRET_FLAG_NONE;
+		const char *val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER);
+		if (val)
+			entry_set_text (priv->server_entry, val);
 
-		nm_setting_get_secret_flags (NM_SETTING (s_vpn), NM_TRUSTTUNNEL_KEY_PASSWORD, &flags, NULL);
-		nma_utils_setup_password_storage (priv->password_entry,
-		                                  flags,
-		                                  NM_SETTING (s_vpn),
-		                                  NM_TRUSTTUNNEL_KEY_PASSWORD,
-		                                  FALSE,
-		                                  FALSE);
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME);
+		if (val)
+			entry_set_text (priv->username_entry, val);
+
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+		if (!val)
+			val = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+		if (val)
+			entry_set_text (priv->password_entry, val);
 	}
 
+	/* Connect only after populating, so that filling the initial values is
+	 * not reported as a user modification. */
+	g_signal_connect (priv->server_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->password_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+
+#if GTK_CHECK_VERSION (4, 0, 0)
+	gtk_widget_set_visible (grid, TRUE);
+#else
 	gtk_widget_show_all (grid);
+#endif
 	priv->widget = grid;
 }
 

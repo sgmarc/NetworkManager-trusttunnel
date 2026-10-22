@@ -461,9 +461,11 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn, GError **error)
 	if (value)
 		config->username = g_strdup (value);
 
-	value = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+	/* The password lives in vpn.data, matching the nmcli workflow
+	 * `vpn.data "password=..."`. A legacy secret is only a fallback. */
+	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 	if (!value || !*value)
-		value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+		value = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 	if (value)
 		config->password = g_strdup (value);
 

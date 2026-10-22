@@ -1,0 +1,39 @@
+#!/bin/sh
+# Minimal auth dialog for the prototype.
+#
+# NetworkManager feeds the connection to us on stdin as
+#
+#     DATA_KEY=<key>\nDATA_VAL=<value>\n\n
+#     SECRET_KEY=<key>\nSECRET_VAL=<value>\n\n
+#
+# The password is kept as a plain vpn.data item (matching the nmcli
+# workflow), so there is nothing to prompt for: we simply hand the value
+# back as a vpn secret in the old-style "key\nvalue\n" line protocol.
+# Outputting nothing would make NetworkManager treat the request as
+# failed ("No agents were available").
+#
+awk '
+	/^SECRET_KEY=password$/ { have_secret = 1; next }
+	/^DATA_KEY=password$/   { have_data   = 1; next }
+	/^DONE$/                { exit }
+	/^SECRET_VAL=/ {
+		if (have_secret) {
+			print "password"
+			print substr($0, 12)
+			done = 1
+		}
+		have_secret = 0
+		next
+	}
+	/^DATA_VAL=/ {
+		if (have_data && !done) {
+			print "password"
+			print substr($0, 10)
+			done = 1
+		}
+		have_data = 0
+		next
+	}
+'
+
+exit 0

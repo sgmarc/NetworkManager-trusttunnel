@@ -47,6 +47,7 @@ shared_libnm_trusttunnel_core_la_LIBADD = \
 ###############################################################################
 
 libexec_PROGRAMS = nm-trusttunnel-service
+dist_libexec_SCRIPTS = auth-dialog/nm-trusttunnel-auth-dialog
 
 nm_trusttunnel_service_SOURCES = \
 	src/nm-trusttunnel-service.c \
@@ -104,6 +105,31 @@ properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_LIBADD = \
 properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_LDFLAGS = \
 	-avoid-version -module
 endif
+
+# The GTK4 editor is built from the same sources as the GTK3 one and is used
+# by GTK4-based consumers such as gnome-control-center. The plugin stub in
+# nm-trusttunnel-editor-plugin.c picks the matching library at runtime.
+if WITH_GTK4
+plugin_LTLIBRARIES += properties/libnm-gtk4-vpn-plugin-trusttunnel-editor.la
+
+properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_SOURCES = \
+	properties/nm-trusttunnel-editor.c \
+	properties/nm-trusttunnel-editor.h
+
+properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_CFLAGS = \
+	$(GTK4_CFLAGS) \
+	$(LIBNM_CFLAGS) \
+	$(LIBNMA_GTK4_CFLAGS)
+
+properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_LIBADD = \
+	$(GTK4_LIBS) \
+	$(LIBNM_LIBS) \
+	$(LIBNMA_GTK4_LIBS)
+
+properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_LDFLAGS = \
+	-avoid-version -module
+endif
+
 
 # The GTK4 editor is built from the same sources as the GTK3 one. It is added
 # together with the migration of the user interface to a GtkBuilder file,

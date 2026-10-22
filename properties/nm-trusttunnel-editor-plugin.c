@@ -3,6 +3,8 @@
 #include "nm-trusttunnel-editor-plugin.h"
 #include "nm-utils/nm-vpn-plugin-utils.h"
 
+#include <gmodule.h>
+
 #define TRUSTTUNNEL_PLUGIN_NAME    _("TrustTunnel")
 #define TRUSTTUNNEL_PLUGIN_DESC    _("Client for TrustTunnel protocol (HTTP/2, QUIC)")
 #define TRUSTTUNNEL_PLUGIN_SERVICE NM_DBUS_SERVICE_TRUSTTUNNEL
@@ -42,7 +44,24 @@ _call_editor_factory (gpointer factory,
 static NMVpnEditor *
 get_editor (NMVpnEditorPlugin *iface, NMConnection *connection, GError **error)
 {
-	return nm_vpn_plugin_utils_load_editor ("libnm-gtk3-vpn-plugin-trusttunnel-editor.so",
+	gpointer gtk3_only_symbol;
+	GModule *self_module;
+	const char *editor;
+
+	/* The editor libraries are built against different GTK major versions.
+	 * Pick the one matching the toolkit that is already loaded in this
+	 * process: a GTK3 editor cannot live inside a GTK4 process such as
+	 * gnome-control-center and vice versa (see NetworkManager-openvpn). */
+	self_module = g_module_open (NULL, 0);
+	g_module_symbol (self_module, "gtk_container_add", &gtk3_only_symbol);
+	g_module_close (self_module);
+
+	if (gtk3_only_symbol)
+		editor = "libnm-gtk3-vpn-plugin-trusttunnel-editor.so";
+	else
+		editor = "libnm-gtk4-vpn-plugin-trusttunnel-editor.so";
+
+	return nm_vpn_plugin_utils_load_editor (editor,
 	                                        "nm_vpn_editor_factory_trusttunnel",
 	                                        _call_editor_factory,
 	                                        iface,

@@ -11,4 +11,5 @@ supports-safe-private-file-access=true
 plugin=@PLUGINDIR@/libnm-vpn-plugin-trusttunnel.so
 
 [GNOME]
-properties=@PLUGINDIR@/libnm-gtk3-vpn-plugin-trusttunnel-editor
+auth-dialog=@LIBEXECDIR@/nm-trusttunnel-auth-dialog
+properties=@PLUGINDIR@/libnm-vpn-plugin-trusttunnel.so

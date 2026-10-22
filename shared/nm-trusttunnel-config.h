@@ -35,6 +35,8 @@ void                  nm_trusttunnel_config_free        (NMTTrusttunnelConfig *c
 
 char                 *nm_trusttunnel_config_to_toml      (const NMTTrusttunnelConfig *config,
                                                          GError **error);
+/* Resolvers used when neither the daemon nor the profile provides any. */
+const char *const    *nm_trusttunnel_config_default_dns_servers (void);
 /* Read an external TOML file. This may only be called from a user session
  * (editor or import); the root service must never use it. */
 char                 *nm_trusttunnel_config_file_to_toml (const char *path,

@@ -16,6 +16,12 @@
 /* Default upstream resolvers, same as the daemon default (AdGuard DNS unfiltered). */
 static const char *const default_dns_servers[] = { "46.243.231.30", "46.243.231.31", NULL };
 
+const char *const *
+nm_trusttunnel_config_default_dns_servers (void)
+{
+	return default_dns_servers;
+}
+
 static char *
 toml_escape (const char *str)
 {

@@ -273,6 +273,35 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_grid_attach (GTK_GRID (grid), priv->gateway_entry, 1, row, 1, 1);
 	row++;
 
+	label = gtk_label_new (_("Custom SNI:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->sni_entry = gtk_entry_new ();
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->sni_entry, 1, row, 1, 1);
+	row++;
+
+	label = gtk_label_new (_("Username:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->username_entry = gtk_entry_new ();
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->username_entry, 1, row, 1, 1);
+	row++;
+
+	label = gtk_label_new (_("Password:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->password_entry = gtk_entry_new ();
+	gtk_entry_set_visibility (GTK_ENTRY (priv->password_entry), FALSE);
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->password_entry, 1, row, 1, 1);
+	row++;
+
+	label = gtk_label_new (_("Client random:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->client_random_entry = gtk_entry_new ();
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->client_random_entry, 1, row, 1, 1);
+	row++;
+
 	label = gtk_label_new (_("Protocol:"));
 	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	priv->protocol_combo = gtk_combo_box_text_new ();
@@ -281,20 +310,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), "http2");
 	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
 	gtk_grid_attach (GTK_GRID (grid), priv->protocol_combo, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Custom SNI:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->sni_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->sni_entry, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Client random:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->client_random_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->client_random_entry, 1, row, 1, 1);
 	row++;
 
 	label = gtk_label_new (_("Certificate:"));
@@ -317,21 +332,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		gtk_grid_attach (GTK_GRID (grid), box, 1, row, 1, 1);
 		row++;
 	}
-
-	label = gtk_label_new (_("Username:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->username_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->username_entry, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Password:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->password_entry = gtk_entry_new ();
-	gtk_entry_set_visibility (GTK_ENTRY (priv->password_entry), FALSE);
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->password_entry, 1, row, 1, 1);
-	row++;
 
 	{
 		const char *addr = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ADDRESS);

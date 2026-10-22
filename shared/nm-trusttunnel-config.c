@@ -443,11 +443,16 @@ split_dns_servers (const char *dns_servers)
 	char **list;
 	GPtrArray *result;
 	guint i;
+	g_autofree char *normalized = NULL;
 
 	if (!dns_servers || !*dns_servers)
 		return NULL;
 
-	list = g_strsplit (dns_servers, ",", -1);
+	/* Values are stored comma separated in vpn.data; the editor presents
+	 * them one per line, so normalize newlines to commas first. */
+	dns_servers = normalized = g_strdup (dns_servers);
+	g_strdelimit ((char *) normalized, "\n", ',');
+	list = g_strsplit (normalized, ",", -1);
 	result = g_ptr_array_new ();
 	for (i = 0; list[i]; i++) {
 		char *item = g_strstrip (list[i]);

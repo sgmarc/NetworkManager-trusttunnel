@@ -24,6 +24,7 @@
 typedef struct {
 	GDBusProxy *proxy;
 	gulong signal_handler_id;
+	gulong name_owner_handler_id;
 	guint connect_timeout_id;
 	guint retry_timeout_id;
 	guint generation;
@@ -84,6 +85,7 @@ async_call_is_current (AsyncCall *call)
 }
 
 static void start_session (NMTrusttunnelPlugin *plugin);
+static void resolve_endpoint (NMTrusttunnelPlugin *plugin);
 
 /* Ask the daemon to release the session. This is used on abort paths where the
  * regular cancellable may already be cancelled, so it intentionally passes no
@@ -434,6 +436,76 @@ on_dbus_signal (GDBusProxy *proxy G_GNUC_UNUSED,
 	}
 }
 
+static void
+on_name_owner_changed (GDBusProxy *proxy, GParamSpec *pspec G_GNUC_UNUSED, gpointer user_data)
+{
+	NMTrusttunnelPlugin *plugin = NM_TRUSTTUNNEL_PLUGIN (user_data);
+	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
+
+	if (priv->aborted || g_dbus_proxy_get_name_owner (proxy) != NULL)
+		return;
+
+	/* The daemon vanished while the session was starting or active. No
+	 * StateChanged will arrive in that case, so report the failure here. */
+	g_warning ("trusttunneld disappeared from the bus");
+	clear_connect_timeout (priv);
+	clear_retry_timeout (priv);
+	priv->aborted = TRUE;
+	priv->generation++;
+
+	if (priv->connected) {
+		priv->connected = FALSE;
+		nm_vpn_service_plugin_disconnect (NM_VPN_SERVICE_PLUGIN (plugin), NULL);
+	} else {
+		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
+		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
+	}
+}
+
+static void
+on_proxy_ready (GObject *source G_GNUC_UNUSED, GAsyncResult *result, gpointer user_data)
+{
+	AsyncCall *call = user_data;
+	NMTrusttunnelPlugin *plugin = call->plugin;
+	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
+	GError *error = NULL;
+	GDBusProxy *proxy;
+
+	proxy = g_dbus_proxy_new_for_bus_finish (result, &error);
+	if (!proxy) {
+		if (async_call_is_current (call)) {
+			g_warning ("Failed to connect to trusttunneld: %s",
+			           error ? error->message : "unknown");
+			clear_connect_timeout (priv);
+			priv->aborted = TRUE;
+			nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
+			                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
+		}
+		g_clear_error (&error);
+		async_call_free (call);
+		return;
+	}
+
+	if (!async_call_is_current (call)) {
+		g_object_unref (proxy);
+		async_call_free (call);
+		return;
+	}
+
+	priv->proxy = proxy;
+	priv->signal_handler_id = g_signal_connect (priv->proxy,
+	                                            "g-signal",
+	                                            G_CALLBACK (on_dbus_signal),
+	                                            plugin);
+	priv->name_owner_handler_id = g_signal_connect (priv->proxy,
+	                                                "notify::g-name-owner",
+	                                                G_CALLBACK (on_name_owner_changed),
+	                                                plugin);
+
+	resolve_endpoint (plugin);
+	async_call_free (call);
+}
+
 static gboolean
 connect_timeout_cb (gpointer user_data)
 {
@@ -760,26 +832,21 @@ real_connect (NMVpnServicePlugin *plugin,
 	                                                  connect_timeout_cb,
 	                                                  NM_TRUSTTUNNEL_PLUGIN (plugin));
 
-	/* Connect to trusttunneld via the system bus. */
+	/* Connect to trusttunneld via the system bus. This must not block the
+	 * main loop: the watchdog has to be able to fire while the bus name is
+	 * being resolved or activated. */
 	if (!priv->proxy) {
-		priv->proxy = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SYSTEM,
-		                                             G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
-		                                             NULL,
-		                                             NM_TRUSTTUNNEL_DBUS_SERVICE,
-		                                             NM_TRUSTTUNNEL_DBUS_PATH,
-		                                             NM_TRUSTTUNNEL_DBUS_INTERFACE,
-		                                             NULL,
-		                                             error);
-		if (!priv->proxy) {
-			g_clear_pointer (&priv->pending_toml, g_free);
-			clear_connect_timeout (priv);
-			return FALSE;
-		}
-
-		priv->signal_handler_id = g_signal_connect (priv->proxy,
-		                                            "g-signal",
-		                                            G_CALLBACK (on_dbus_signal),
-		                                            plugin);
+		g_dbus_proxy_new_for_bus (G_BUS_TYPE_SYSTEM,
+		                          G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
+		                          NULL,
+		                          NM_TRUSTTUNNEL_DBUS_SERVICE,
+		                          NM_TRUSTTUNNEL_DBUS_PATH,
+		                          NM_TRUSTTUNNEL_DBUS_INTERFACE,
+		                          priv->cancellable,
+		                          on_proxy_ready,
+		                          async_call_new (NM_TRUSTTUNNEL_PLUGIN (plugin),
+		                                          priv->generation));
+		return TRUE;
 	}
 
 	resolve_endpoint (NM_TRUSTTUNNEL_PLUGIN (plugin));
@@ -812,6 +879,10 @@ real_disconnect (NMVpnServicePlugin *plugin, GError **err)
 		if (priv->signal_handler_id) {
 			g_signal_handler_disconnect (priv->proxy, priv->signal_handler_id);
 			priv->signal_handler_id = 0;
+		}
+		if (priv->name_owner_handler_id) {
+			g_signal_handler_disconnect (priv->proxy, priv->name_owner_handler_id);
+			priv->name_owner_handler_id = 0;
 		}
 
 		/* Always send Stop. It is harmless when no session exists, and it is
@@ -942,6 +1013,10 @@ nm_trusttunnel_plugin_finalize (GObject *object)
 	if (priv->signal_handler_id && priv->proxy) {
 		g_signal_handler_disconnect (priv->proxy, priv->signal_handler_id);
 		priv->signal_handler_id = 0;
+	}
+	if (priv->name_owner_handler_id && priv->proxy) {
+		g_signal_handler_disconnect (priv->proxy, priv->name_owner_handler_id);
+		priv->name_owner_handler_id = 0;
 	}
 
 	g_clear_object (&priv->proxy);

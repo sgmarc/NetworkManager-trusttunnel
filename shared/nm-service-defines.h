@@ -20,6 +20,7 @@
 #define NM_TRUSTTUNNEL_KEY_PASSWORD          "password"
 #define NM_TRUSTTUNNEL_KEY_PROTOCOL          "protocol"
 #define NM_TRUSTTUNNEL_KEY_CUSTOM_SNI        "custom-sni"
+#define NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM     "client-random"
 #define NM_TRUSTTUNNEL_KEY_CERT_PEM          "cert-pem"
 #define NM_TRUSTTUNNEL_KEY_DNS_SERVERS       "dns-servers"
 #define NM_TRUSTTUNNEL_KEY_ALLOW_IPV6        "allow-ipv6"

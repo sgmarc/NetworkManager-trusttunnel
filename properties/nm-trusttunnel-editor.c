@@ -19,6 +19,8 @@ typedef struct {
 	GtkWidget *widget;
 	GtkWidget *gateway_entry;
 	GtkWidget *protocol_combo;
+	GtkWidget *sni_entry;
+	GtkWidget *client_random_entry;
 	GtkWidget *username_entry;
 	GtkWidget *password_entry;
 } TrusttunnelEditorPrivate;
@@ -87,6 +89,11 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL,
 	               gtk_combo_box_get_active_id (GTK_COMBO_BOX (priv->protocol_combo)));
 
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CUSTOM_SNI,
+	               entry_get_text (priv->sni_entry));
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM,
+	               entry_get_text (priv->client_random_entry));
+
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME,
 	               entry_get_text (priv->username_entry));
 
@@ -152,6 +159,20 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_grid_attach (GTK_GRID (grid), priv->protocol_combo, 1, row, 1, 1);
 	row++;
 
+	label = gtk_label_new (_("Custom SNI:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->sni_entry = gtk_entry_new ();
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->sni_entry, 1, row, 1, 1);
+	row++;
+
+	label = gtk_label_new (_("Client random:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->client_random_entry = gtk_entry_new ();
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->client_random_entry, 1, row, 1, 1);
+	row++;
+
 	label = gtk_label_new (_("Username:"));
 	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	priv->username_entry = gtk_entry_new ();
@@ -200,6 +221,14 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo),
 		                             g_strcmp0 (val, "http3") == 0 ? "http3" : "http2");
 
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CUSTOM_SNI);
+		if (val)
+			entry_set_text (priv->sni_entry, val);
+
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+		if (val)
+			entry_set_text (priv->client_random_entry, val);
+
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME);
 		if (val)
 			entry_set_text (priv->username_entry, val);
@@ -215,6 +244,8 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	 * not reported as a user modification. */
 	g_signal_connect (priv->gateway_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->protocol_combo, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->sni_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->client_random_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->password_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 

@@ -23,6 +23,7 @@ typedef struct {
 	char    *password;      /* endpoint password */
 	char    *protocol;      /* upstream protocol: http2, http3 or auto */
 	char    *custom_sni;    /* custom TLS SNI, or NULL */
+	char    *client_random; /* TLS client random prefix/mask hex string, or NULL */
 	char    *cert_pem;      /* endpoint certificate in PEM format, or NULL */
 	char   **dns_servers;   /* NULL terminated list of DNS upstreams, or NULL */
 	gboolean allow_ipv6;    /* whether IPv6 may be used for the session */

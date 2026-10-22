@@ -540,6 +540,33 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn, GError **error)
 	if (value && *value)
 		config->custom_sni = g_strdup (value);
 
+	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+	if (value && *value) {
+		/* The daemon accepts a hex sequence with an optional "/mask" part. */
+		size_t len = strlen (value);
+		size_t i;
+
+		for (i = 0; i < len; i++) {
+			char c = value[i];
+
+			if (!g_ascii_isxdigit (c) && c != '/' && c != 'x' && c != 'X') {
+				g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+				             "Invalid value for setting \"%s\": expected hex",
+				             NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+				nm_trusttunnel_config_free (config);
+				return NULL;
+			}
+		}
+		if (len > 64) {
+			g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+			             "Invalid value for setting \"%s\": too long",
+			             NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+			nm_trusttunnel_config_free (config);
+			return NULL;
+		}
+		config->client_random = g_strdup (value);
+	}
+
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM);
 	if (value && *value)
 		config->cert_pem = g_strdup (value);
@@ -589,6 +616,7 @@ nm_trusttunnel_config_free (NMTTrusttunnelConfig *config)
 	g_free (config->password);
 	g_free (config->protocol);
 	g_free (config->custom_sni);
+	g_free (config->client_random);
 	g_free (config->cert_pem);
 	g_strfreev (config->dns_servers);
 	g_free (config->log_level);
@@ -695,6 +723,12 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 
 	if (config->custom_sni && *config->custom_sni)
 		g_string_append_printf (toml, "custom_sni = \"%s\"\n", escaped_custom_sni);
+
+	if (config->client_random && *config->client_random) {
+		g_autofree char *escaped_client_random = toml_escape (config->client_random);
+
+		g_string_append_printf (toml, "client_random = \"%s\"\n", escaped_client_random);
+	}
 
 	if (config->cert_pem && *config->cert_pem) {
 		/* A multiline literal string would be terminated by a """ sequence in

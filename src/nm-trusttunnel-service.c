@@ -26,6 +26,7 @@ typedef struct {
 	gulong signal_handler_id;
 	guint connect_timeout_id;
 	guint retry_timeout_id;
+	guint generation;
 	GCancellable *cancellable;
 	char *endpoint_address;
 	char *server_address;
@@ -49,7 +50,56 @@ G_DEFINE_TYPE_WITH_PRIVATE (NMTrusttunnelPlugin, nm_trusttunnel_plugin, NM_TYPE_
 
 static GMainLoop *loop = NULL;
 
+/* State for an asynchronous call. It keeps the plugin alive and records the
+ * connect generation the call belongs to, so a reply from an attempt that was
+ * already aborted cannot modify the current session. */
+typedef struct {
+	NMTrusttunnelPlugin *plugin;
+	guint generation;
+} AsyncCall;
+
+static AsyncCall *
+async_call_new (NMTrusttunnelPlugin *plugin, guint generation)
+{
+	AsyncCall *call = g_new0 (AsyncCall, 1);
+
+	call->plugin = g_object_ref (plugin);
+	call->generation = generation;
+	return call;
+}
+
+static void
+async_call_free (AsyncCall *call)
+{
+	g_object_unref (call->plugin);
+	g_free (call);
+}
+
+static gboolean
+async_call_is_current (AsyncCall *call)
+{
+	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (call->plugin);
+
+	return call->generation == priv->generation && !priv->aborted;
+}
+
 static void start_session (NMTrusttunnelPlugin *plugin);
+
+/* Ask the daemon to release the session. This is used on abort paths where the
+ * regular cancellable may already be cancelled, so it intentionally passes no
+ * cancellable: the Stop request must actually reach the daemon. */
+static void
+send_stop_request (GDBusProxy *proxy)
+{
+	g_dbus_proxy_call (proxy,
+	                   "Stop",
+	                   NULL,
+	                   G_DBUS_CALL_FLAGS_NONE,
+	                   NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC * 1000,
+	                   NULL,
+	                   NULL,
+	                   NULL);
+}
 
 static gboolean
 retry_start_cb (gpointer user_data)
@@ -101,6 +151,19 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 	gsize n_dns = 0;
 	const gchar **dns_strv;
 
+	/* The watchdog, a failed attempt or a disconnect make the session
+	 * terminal. A NetworkReady that was already queued cannot be allowed to
+	 * configure addresses for a connection that NetworkManager considers
+	 * failed or gone. */
+	if (priv->aborted) {
+		g_message ("Ignoring NetworkReady after the session was aborted");
+		return;
+	}
+	if (priv->connected) {
+		g_message ("Ignoring repeated NetworkReady for an active session");
+		return;
+	}
+
 	g_variant_get (parameters, "(&s&su&suu@as)",
 	               &iface,
 	               &ipv4_addr_str,
@@ -132,6 +195,7 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 		g_warning ("trusttunneld did not provide any usable address");
 		g_variant_unref (dns_variant);
 		clear_connect_timeout (priv);
+		priv->aborted = TRUE;
 		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
 		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
 		return;
@@ -285,6 +349,11 @@ handle_state_changed (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
 	gint32 new_state = 0;
 
+	if (priv->aborted) {
+		g_message ("Ignoring StateChanged after the session was aborted");
+		return;
+	}
+
 	g_variant_get (parameters, "(i)", &new_state);
 	g_message ("StateChanged signal received: state=%d", new_state);
 
@@ -311,6 +380,10 @@ handle_state_changed (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 		}
 
 		clear_connect_timeout (priv);
+		/* The session is over regardless of whether it had become active.
+		 * Mark it terminal before reporting, so any signal that is already
+		 * queued behind this one is ignored. */
+		priv->aborted = TRUE;
 
 		if (priv->connected) {
 			g_message ("trusttunneld disconnected while the session was active");
@@ -370,15 +443,19 @@ connect_timeout_cb (gpointer user_data)
 	priv->connect_timeout_id = 0;
 	/* Abort the connect sequence. A Start request or a retry that is still in
 	 * flight must not start a session anymore, the failure is reported to
-	 * NetworkManager right below. */
+	 * NetworkManager right below. Bumping the generation makes all pending
+	 * replies stale; a Start reply that still succeeds tears the session down
+	 * itself. */
 	priv->aborted = TRUE;
+	priv->generation++;
+	clear_retry_timeout (priv);
 	g_warning ("Timeout waiting for the network configuration from trusttunneld");
 
 	if (priv->proxy) {
 		/* Tear the session down, NetworkManager is not going to ask for it
 		 * once the failure is reported. */
 		priv->stop_requested = TRUE;
-		g_dbus_proxy_call (priv->proxy, "Stop", NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
+		send_stop_request (priv->proxy);
 	}
 
 	nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
@@ -389,8 +466,7 @@ connect_timeout_cb (gpointer user_data)
 static void
 on_stop_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 {
-	NMTrusttunnelPlugin *plugin = NM_TRUSTTUNNEL_PLUGIN (user_data);
-	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
+	AsyncCall *call = user_data;
 	GError *error = NULL;
 	GVariant *reply;
 
@@ -407,17 +483,16 @@ on_stop_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 			g_warning ("trusttunneld rejected the Stop request with error code %u", err_code);
 	}
 
-	if (priv->aborted)
-		return;
-
 	/* The daemon stops the session asynchronously, the request is repeated
 	 * when it reports the session as disconnected. */
+	async_call_free (call);
 }
 
 static void
 on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 {
-	NMTrusttunnelPlugin *plugin = NM_TRUSTTUNNEL_PLUGIN (user_data);
+	AsyncCall *call = user_data;
+	NMTrusttunnelPlugin *plugin = call->plugin;
 	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
 	GError *error = NULL;
 	GVariant *reply;
@@ -425,33 +500,34 @@ on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 
 	reply = g_dbus_proxy_call_finish (G_DBUS_PROXY (source), result, &error);
 	if (!reply) {
-		g_warning ("Failed to invoke Start on trusttunneld: %s", error->message);
+		if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+			g_warning ("Failed to invoke Start on trusttunneld: %s",
+			           error ? error->message : "unknown");
 		g_clear_error (&error);
-		if (priv->aborted)
-			return;
-		clear_connect_timeout (priv);
-		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
-		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
+
+		if (async_call_is_current (call)) {
+			clear_connect_timeout (priv);
+			priv->aborted = TRUE;
+			nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
+			                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
+		}
+		async_call_free (call);
 		return;
 	}
 
 	g_variant_get (reply, "(u)", &err_code);
 	g_variant_unref (reply);
 
-	if (priv->aborted) {
-		/* The request was aborted while it was in flight. The daemon may
-		 * have started a session nevertheless, tear it down. */
+	if (!async_call_is_current (call)) {
+		/* The attempt was aborted while the Start request was in flight.
+		 * The daemon may have created the session anyway, so release it. A
+		 * newer attempt cannot own this session: the daemon serializes Start
+		 * and would have answered ALREADY_RUNNING to it. */
 		if (err_code == NM_TRUSTTUNNEL_ERROR_SUCCESS) {
 			g_message ("The Start request was aborted, stopping the session");
-			g_dbus_proxy_call (priv->proxy,
-			                   "Stop",
-			                   NULL,
-			                   G_DBUS_CALL_FLAGS_NONE,
-			                   NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC * 1000,
-			                   priv->cancellable,
-			                   NULL,
-			                   NULL);
+			send_stop_request (G_DBUS_PROXY (source));
 		}
+		async_call_free (call);
 		return;
 	}
 
@@ -460,25 +536,30 @@ on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 			/* The daemon keeps a single session, a session left over by a
 			 * crashed client is stopped and the request is repeated once the
 			 * daemon reports the session as disconnected. */
+			AsyncCall *stop_call = async_call_new (plugin, priv->generation);
+
 			priv->start_retried = TRUE;
 			priv->stopping_for_retry = TRUE;
 			g_message ("trusttunneld reports a running session, stopping it and retrying");
-			g_dbus_proxy_call (priv->proxy,
+			g_dbus_proxy_call (G_DBUS_PROXY (source),
 			                   "Stop",
 			                   NULL,
 			                   G_DBUS_CALL_FLAGS_NONE,
 			                   NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC * 1000,
-			                   priv->cancellable,
+			                   NULL,
 			                   on_stop_reply,
-			                   plugin);
+			                   stop_call);
+			async_call_free (call);
 			return;
 		}
 
 		g_warning ("trusttunneld still reports a running session after it was stopped");
 		priv->stopping_for_retry = FALSE;
 		clear_connect_timeout (priv);
+		priv->aborted = TRUE;
 		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
 		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
+		async_call_free (call);
 		return;
 	}
 
@@ -493,13 +574,16 @@ on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 		}
 		priv->stopping_for_retry = FALSE;
 		clear_connect_timeout (priv);
+		priv->aborted = TRUE;
 		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
 		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
+		async_call_free (call);
 		return;
 	}
 
 	priv->stopping_for_retry = FALSE;
 	g_clear_pointer (&priv->pending_toml, g_free);
+	async_call_free (call);
 }
 
 static void
@@ -510,14 +594,11 @@ start_session (NMTrusttunnelPlugin *plugin)
 	if (priv->aborted)
 		return;
 
-	if (!priv->proxy) {
-		g_warning ("No connection to trusttunneld");
-		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
-		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
-		return;
-	}
-
-	if (!priv->pending_toml) {
+	if (!priv->proxy || !priv->pending_toml) {
+		g_warning ("Cannot start the session: %s",
+		           priv->proxy ? "the configuration is missing" : "no connection to trusttunneld");
+		clear_connect_timeout (priv);
+		priv->aborted = TRUE;
 		nm_vpn_service_plugin_failure (NM_VPN_SERVICE_PLUGIN (plugin),
 		                               NM_VPN_PLUGIN_FAILURE_CONNECT_FAILED);
 		return;
@@ -531,22 +612,35 @@ start_session (NMTrusttunnelPlugin *plugin)
 	                   NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC * 1000,
 	                   priv->cancellable,
 	                   on_start_reply,
-	                   plugin);
+	                   async_call_new (plugin, priv->generation));
 }
 
 static void
 on_endpoint_resolved (GObject *source, GAsyncResult *result, gpointer user_data)
 {
-	NMTrusttunnelPlugin *plugin = NM_TRUSTTUNNEL_PLUGIN (user_data);
+	AsyncCall *call = user_data;
+	NMTrusttunnelPlugin *plugin = call->plugin;
 	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
 	GError *error = NULL;
 	GList *addresses;
 
 	addresses = g_resolver_lookup_by_name_finish (G_RESOLVER (source), result, &error);
+
+	if (!async_call_is_current (call)) {
+		/* The attempt was aborted or superseded while the lookup was in
+		 * flight. Do not report a cancellation as a connection failure. */
+		if (addresses)
+			g_resolver_free_addresses (addresses);
+		g_clear_error (&error);
+		async_call_free (call);
+		return;
+	}
+
 	if (!addresses) {
-		g_warning ("Failed to resolve VPN server %s: %s",
-		           priv->endpoint_address ? priv->endpoint_address : "(null)",
-		           error->message);
+		if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+			g_warning ("Failed to resolve VPN server %s: %s",
+			           priv->endpoint_address ? priv->endpoint_address : "(null)",
+			           error ? error->message : "unknown");
 		g_clear_error (&error);
 	} else {
 		GList *l;
@@ -568,6 +662,7 @@ on_endpoint_resolved (GObject *source, GAsyncResult *result, gpointer user_data)
 	 * must not be unreferenced here. */
 
 	start_session (plugin);
+	async_call_free (call);
 }
 
 /* Resolve the endpoint address to be able to report it as the external
@@ -603,7 +698,7 @@ resolve_endpoint (NMTrusttunnelPlugin *plugin)
 	                                 priv->endpoint_address,
 	                                 priv->cancellable,
 	                                 on_endpoint_resolved,
-	                                 plugin);
+	                                 async_call_new (plugin, priv->generation));
 	g_object_unref (resolver);
 }
 
@@ -627,6 +722,7 @@ real_connect (NMVpnServicePlugin *plugin,
 	if (!config)
 		return FALSE;
 
+	g_clear_pointer (&priv->pending_toml, g_free);
 	priv->pending_toml = nm_trusttunnel_config_to_toml (config, error);
 	priv->allow_ipv6 = config->allow_ipv6;
 	g_clear_pointer (&priv->endpoint_address, g_free);
@@ -649,6 +745,8 @@ real_connect (NMVpnServicePlugin *plugin,
 	priv->has_ip6 = FALSE;
 	priv->sent_ip4 = FALSE;
 	priv->sent_ip6 = FALSE;
+	/* Invalidate every callback and reply from a previous attempt. */
+	priv->generation++;
 
 	/* A cancelled GCancellable cannot be reused, start with a fresh one. */
 	g_clear_object (&priv->cancellable);
@@ -702,11 +800,11 @@ real_disconnect (NMVpnServicePlugin *plugin, GError **err)
 	clear_retry_timeout (priv);
 
 	/* Abort a connect sequence that is still in flight, its asynchronous
-	 * callbacks must not start a session anymore. */
+	 * callbacks must not start a session anymore. The generation makes their
+	 * replies stale; they are deliberately not cancelled, so a Start request
+	 * that reaches the daemon can still release its session. */
 	priv->aborted = TRUE;
-
-	if (priv->cancellable)
-		g_cancellable_cancel (priv->cancellable);
+	priv->generation++;
 
 	if (priv->proxy) {
 		/* Stop listening to the daemon first, the session is going down
@@ -716,32 +814,31 @@ real_disconnect (NMVpnServicePlugin *plugin, GError **err)
 			priv->signal_handler_id = 0;
 		}
 
-		if (priv->stop_requested) {
-			/* The daemon was already asked to stop the session. */
-			priv->stop_requested = FALSE;
+		/* Always send Stop. It is harmless when no session exists, and it is
+		 * required when the watchdog already tried and failed to stop one. */
+		res = g_dbus_proxy_call_sync (priv->proxy,
+		                              "Stop",
+		                              NULL,
+		                              G_DBUS_CALL_FLAGS_NONE,
+		                              NM_TRUSTTUNNEL_STOP_TIMEOUT_SEC * 1000,
+		                              NULL,
+		                              &error);
+		if (res) {
+			guint32 err_code = 0;
+			g_variant_get (res, "(u)", &err_code);
+			g_variant_unref (res);
+			if (err_code != NM_TRUSTTUNNEL_ERROR_SUCCESS)
+				g_warning ("trusttunneld rejected the Stop request with error code %u", err_code);
 		} else {
-			res = g_dbus_proxy_call_sync (priv->proxy,
-			                              "Stop",
-			                              NULL,
-			                              G_DBUS_CALL_FLAGS_NONE,
-			                              NM_TRUSTTUNNEL_STOP_TIMEOUT_SEC * 1000,
-			                              NULL,
-			                              &error);
-			if (res) {
-				guint32 err_code = 0;
-				g_variant_get (res, "(u)", &err_code);
-				g_variant_unref (res);
-				if (err_code != NM_TRUSTTUNNEL_ERROR_SUCCESS)
-					g_warning ("trusttunneld rejected the Stop request with error code %u", err_code);
-			} else {
-				g_warning ("Failed to invoke Stop on trusttunneld: %s",
-				           error ? error->message : "unknown");
-				g_clear_error (&error);
-			}
+			g_warning ("Failed to invoke Stop on trusttunneld: %s",
+			           error ? error->message : "unknown");
+			g_clear_error (&error);
 		}
 
 		g_clear_object (&priv->proxy);
 	}
+
+	priv->stop_requested = FALSE;
 
 	g_clear_pointer (&priv->server_address, g_free);
 	g_clear_pointer (&priv->endpoint_address, g_free);
@@ -840,6 +937,7 @@ nm_trusttunnel_plugin_finalize (GObject *object)
 	NMTrusttunnelPluginPrivate *priv = NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE (plugin);
 
 	clear_connect_timeout (priv);
+	clear_retry_timeout (priv);
 
 	if (priv->signal_handler_id && priv->proxy) {
 		g_signal_handler_disconnect (priv->proxy, priv->signal_handler_id);

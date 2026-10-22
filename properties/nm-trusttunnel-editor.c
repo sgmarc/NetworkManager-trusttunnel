@@ -3,6 +3,7 @@
 #include "nm-trusttunnel-editor.h"
 
 #include <gtk/gtk.h>
+#include <nma-ui-utils.h>
 
 static void trusttunnel_editor_interface_init (NMVpnEditorInterface *iface_class);
 
@@ -76,6 +77,13 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 		nm_setting_vpn_remove_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 	}
 
+	/* Store the user's choice (save in keyring, ask every time, ...) as the
+	 * standard NM secret flag for the password. */
+	nm_setting_set_secret_flags (NM_SETTING (s_vpn),
+	                             NM_TRUSTTUNNEL_KEY_PASSWORD,
+	                             nma_utils_menu_to_secret_flags (priv->password_entry),
+	                             NULL);
+
 	str = gtk_combo_box_text_get_active_text (GTK_COMBO_BOX_TEXT (priv->protocol_combo));
 	if (str && strlen (str) > 0) {
 		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL, str);
@@ -98,6 +106,14 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 {
 	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (self);
 	NMSettingVpn *s_vpn = nm_connection_get_setting_vpn (connection);
+
+	if (!s_vpn) {
+		s_vpn = (NMSettingVpn *) nm_setting_vpn_new ();
+		g_object_set (s_vpn,
+		              NM_SETTING_VPN_SERVICE_TYPE, NM_DBUS_SERVICE_TRUSTTUNNEL,
+		              NULL);
+		nm_connection_add_setting (connection, NM_SETTING (s_vpn));
+	}
 
 	GtkWidget *grid = gtk_grid_new ();
 	gtk_grid_set_row_spacing (GTK_GRID (grid), 10);
@@ -133,11 +149,15 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 
 	/* Password */
 	GtkWidget *lbl_pass = gtk_label_new (_("Password:"));
+	GtkWidget *pass_row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
 	gtk_widget_set_halign (lbl_pass, GTK_ALIGN_START);
 	priv->password_entry = gtk_entry_new ();
 	gtk_entry_set_visibility (GTK_ENTRY (priv->password_entry), FALSE);
+	/* nma_utils_setup_password_storage() adds its menu button to the entry's
+	 * parent, so the entry must live in a box rather than directly in the grid. */
+	gtk_box_pack_start (GTK_BOX (pass_row), priv->password_entry, TRUE, TRUE, 0);
 	gtk_grid_attach (GTK_GRID (grid), lbl_pass, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->password_entry, 1, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), pass_row, 1, row, 1, 1);
 	row++;
 
 	/* Protocol */
@@ -184,6 +204,18 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_BINARY);
 		if (val) gtk_entry_set_text (GTK_ENTRY (priv->client_binary_entry), val);
+	}
+
+	{
+		NMSettingSecretFlags flags = NM_SETTING_SECRET_FLAG_NONE;
+
+		nm_setting_get_secret_flags (NM_SETTING (s_vpn), NM_TRUSTTUNNEL_KEY_PASSWORD, &flags, NULL);
+		nma_utils_setup_password_storage (priv->password_entry,
+		                                  flags,
+		                                  NM_SETTING (s_vpn),
+		                                  NM_TRUSTTUNNEL_KEY_PASSWORD,
+		                                  FALSE,
+		                                  FALSE);
 	}
 
 	gtk_widget_show_all (grid);

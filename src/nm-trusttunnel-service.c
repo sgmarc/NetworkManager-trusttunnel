@@ -31,6 +31,7 @@ typedef struct {
 	GCancellable *cancellable;
 	char *endpoint_address;
 	char *server_address;
+	char **dns_servers;
 	char *pending_toml;
 	gboolean connected;
 	gboolean aborted;
@@ -150,8 +151,10 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 	gboolean has_ip4;
 	struct in6_addr v6_addr;
 	gboolean has_ip6;
-	gsize n_dns = 0;
-	const gchar **dns_strv;
+	const gchar **ready_dns = NULL;
+	gsize n_ready_dns = 0;
+	const gchar *const *dns_list;
+	gsize n_dns;
 
 	/* The watchdog, a failed attempt or a disconnect make the session
 	 * terminal. A NetworkReady that was already queued cannot be allowed to
@@ -242,7 +245,21 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 	nm_vpn_service_plugin_set_config (NM_VPN_SERVICE_PLUGIN (plugin),
 	                                  g_variant_builder_end (&config));
 
-	dns_strv = g_variant_get_strv (dns_variant, &n_dns);
+	ready_dns = g_variant_get_strv (dns_variant, &n_ready_dns);
+	if (n_ready_dns > 0) {
+		dns_list = (const gchar *const *) ready_dns;
+		n_dns = n_ready_dns;
+	} else if (priv->dns_servers && priv->dns_servers[0]) {
+		/* The daemon intentionally reports no DNS in unmanaged mode, so the
+		 * profile's dns-servers setting is the next authority. */
+		g_message ("trusttunneld did not report DNS, using the profile settings");
+		dns_list = (const gchar *const *) priv->dns_servers;
+		n_dns = g_strv_length (priv->dns_servers);
+	} else {
+		g_message ("trusttunneld did not report DNS, using the built-in resolvers");
+		dns_list = nm_trusttunnel_config_default_dns_servers ();
+		n_dns = g_strv_length ((gchar **) dns_list);
+	}
 
 	if (has_ip4) {
 		g_variant_builder_init (&ip4config, G_VARIANT_TYPE_VARDICT);
@@ -256,14 +273,14 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 		                       NM_VPN_PLUGIN_IP4_CONFIG_PREFIX,
 		                       g_variant_new_uint32 (prefix));
 
-		if (dns_strv && n_dns > 0) {
+		if (dns_list && n_dns > 0) {
 			GVariantBuilder dns_builder;
 			gboolean has_dns = FALSE;
 			g_variant_builder_init (&dns_builder, G_VARIANT_TYPE ("au"));
 
 			for (gsize i = 0; i < n_dns; i++) {
 				struct in_addr dns_addr;
-				if (inet_pton (AF_INET, dns_strv[i], &dns_addr) == 1) {
+				if (inet_pton (AF_INET, dns_list[i], &dns_addr) == 1) {
 					g_variant_builder_add (&dns_builder, "u", dns_addr.s_addr);
 					has_dns = TRUE;
 				}
@@ -300,14 +317,14 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 		                       NM_VPN_PLUGIN_IP6_CONFIG_PREFIX,
 		                       g_variant_new_uint32 (p6));
 
-		if (dns_strv && n_dns > 0) {
+		if (dns_list && n_dns > 0) {
 			GVariantBuilder dns6_builder;
 			gboolean has_dns6 = FALSE;
 			g_variant_builder_init (&dns6_builder, G_VARIANT_TYPE ("aay"));
 
 			for (gsize i = 0; i < n_dns; i++) {
 				struct in6_addr dns6_addr;
-				if (inet_pton (AF_INET6, dns_strv[i], &dns6_addr) == 1) {
+				if (inet_pton (AF_INET6, dns_list[i], &dns6_addr) == 1) {
 					GVariant *dns6_var = g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE,
 					                                                &dns6_addr,
 					                                                sizeof (dns6_addr),
@@ -331,7 +348,7 @@ handle_network_ready (NMTrusttunnelPlugin *plugin, GVariant *parameters)
 		priv->sent_ip6 = TRUE;
 	}
 
-	g_free (dns_strv);
+	g_free (ready_dns);
 	g_variant_unref (dns_variant);
 
 	/* All announced addresses are configured now, libnm switches the plugin to
@@ -797,6 +814,8 @@ real_connect (NMVpnServicePlugin *plugin,
 	g_clear_pointer (&priv->pending_toml, g_free);
 	priv->pending_toml = nm_trusttunnel_config_to_toml (config, error);
 	priv->allow_ipv6 = config->allow_ipv6;
+	g_strfreev (priv->dns_servers);
+	priv->dns_servers = g_strdupv (config->dns_servers);
 	g_clear_pointer (&priv->endpoint_address, g_free);
 	if (config->address && *config->address)
 		priv->endpoint_address = g_strdup (config->address);
@@ -913,6 +932,8 @@ real_disconnect (NMVpnServicePlugin *plugin, GError **err)
 
 	g_clear_pointer (&priv->server_address, g_free);
 	g_clear_pointer (&priv->endpoint_address, g_free);
+	g_strfreev (priv->dns_servers);
+	priv->dns_servers = NULL;
 	g_clear_pointer (&priv->pending_toml, g_free);
 	priv->connected = FALSE;
 	priv->stopping_for_retry = FALSE;
@@ -1022,6 +1043,8 @@ nm_trusttunnel_plugin_finalize (GObject *object)
 	g_clear_object (&priv->proxy);
 	g_clear_pointer (&priv->server_address, g_free);
 	g_clear_pointer (&priv->endpoint_address, g_free);
+	g_strfreev (priv->dns_servers);
+	priv->dns_servers = NULL;
 	g_clear_pointer (&priv->pending_toml, g_free);
 
 	G_OBJECT_CLASS (nm_trusttunnel_plugin_parent_class)->finalize (object);

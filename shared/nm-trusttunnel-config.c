@@ -280,6 +280,7 @@ gboolean
 nm_trusttunnel_config_parse_gateway (const char *gateway, char **out_host, guint16 *out_port)
 {
 	g_autofree char *host = NULL;
+	g_autofree char *copy = NULL;
 	guint16 port = 0;
 	const char *colon;
 
@@ -291,8 +292,10 @@ nm_trusttunnel_config_parse_gateway (const char *gateway, char **out_host, guint
 	if (!gateway)
 		return FALSE;
 
-	g_strstrip ((char *) gateway);
-	if (!*gateway)
+	/* Never strip in place: the input may be read-only memory. */
+	gateway = copy = g_strdup (gateway);
+	g_strstrip (copy);
+	if (!*copy)
 		return FALSE;
 
 	if (gateway[0] == '[') {

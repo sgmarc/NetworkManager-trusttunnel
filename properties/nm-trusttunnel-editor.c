@@ -22,6 +22,7 @@ typedef struct {
 	GtkWidget *sni_entry;
 	GtkWidget *client_random_entry;
 	GtkWidget *cert_entry;
+	GtkWidget *cert_domain_entry;
 	char *cert_pem;
 	GtkWidget *username_entry;
 	GtkWidget *password_entry;
@@ -97,6 +98,15 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 	               entry_get_text (priv->client_random_entry));
 
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM, priv->cert_pem);
+
+	{
+		const char *cert_domain = entry_get_text (priv->cert_domain_entry);
+
+		/* The TLS server name used for certificate verification; when not
+		 * given, the gateway host is used. */
+		set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER,
+		               (cert_domain && *cert_domain) ? cert_domain : host);
+	}
 
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME,
 	               entry_get_text (priv->username_entry));
@@ -268,9 +278,15 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	label = gtk_label_new (_("Gateway:"));
 	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	priv->gateway_entry = gtk_entry_new ();
-	gtk_entry_set_placeholder_text (GTK_ENTRY (priv->gateway_entry), _("host or host:port"));
 	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
 	gtk_grid_attach (GTK_GRID (grid), priv->gateway_entry, 1, row, 1, 1);
+	row++;
+
+	label = gtk_label_new (_("Certificate domain:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->cert_domain_entry = gtk_entry_new ();
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->cert_domain_entry, 1, row, 1, 1);
 	row++;
 
 	label = gtk_label_new (_("Custom SNI:"));
@@ -295,13 +311,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_grid_attach (GTK_GRID (grid), priv->password_entry, 1, row, 1, 1);
 	row++;
 
-	label = gtk_label_new (_("Client random:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->client_random_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->client_random_entry, 1, row, 1, 1);
-	row++;
-
 	label = gtk_label_new (_("Protocol:"));
 	gtk_widget_set_halign (label, GTK_ALIGN_START);
 	priv->protocol_combo = gtk_combo_box_text_new ();
@@ -310,6 +319,13 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), "http2");
 	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
 	gtk_grid_attach (GTK_GRID (grid), priv->protocol_combo, 1, row, 1, 1);
+	row++;
+
+	label = gtk_label_new (_("Client random:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->client_random_entry = gtk_entry_new ();
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->client_random_entry, 1, row, 1, 1);
 	row++;
 
 	label = gtk_label_new (_("Certificate:"));
@@ -380,6 +396,14 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 			entry_set_text (priv->cert_entry, _("(certificate stored in profile)"));
 		}
 
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER);
+		if (val && *val) {
+			const char *addr = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ADDRESS);
+
+			if (g_strcmp0 (val, addr) != 0)
+				entry_set_text (priv->cert_domain_entry, val);
+		}
+
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME);
 		if (val)
 			entry_set_text (priv->username_entry, val);
@@ -399,6 +423,7 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	g_signal_connect (priv->client_random_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->password_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->cert_domain_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 
 #if GTK_CHECK_VERSION (4, 0, 0)
 	gtk_widget_set_visible (grid, TRUE);

@@ -276,6 +276,60 @@ parse_port (const char *value, guint16 *out_port)
 	return TRUE;
 }
 
+gboolean
+nm_trusttunnel_config_parse_gateway (const char *gateway, char **out_host, guint16 *out_port)
+{
+	g_autofree char *host = NULL;
+	guint16 port = 0;
+	const char *colon;
+
+	if (out_host)
+		*out_host = NULL;
+	if (out_port)
+		*out_port = 0;
+
+	if (!gateway)
+		return FALSE;
+
+	g_strstrip ((char *) gateway);
+	if (!*gateway)
+		return FALSE;
+
+	if (gateway[0] == '[') {
+		const char *end = strchr (gateway, ']');
+
+		if (!end)
+			return FALSE;
+		host = g_strndup (gateway + 1, end - gateway - 1);
+		if (end[1] == ':') {
+			if (!parse_port (end + 2, &port))
+				return FALSE;
+		} else if (end[1] != '\0') {
+			return FALSE;
+		}
+	} else {
+		colon = strrchr (gateway, ':');
+		/* A single colon separates the port; multiple colons mean an
+		 * unbracketed IPv6 address. */
+		if (colon && strchr (gateway, ':') == colon) {
+			host = g_strndup (gateway, colon - gateway);
+			if (!parse_port (colon + 1, &port))
+				return FALSE;
+		} else {
+			host = g_strdup (gateway);
+		}
+	}
+
+	if (!is_valid_endpoint_host (host))
+		return FALSE;
+
+	if (out_host)
+		*out_host = g_steal_pointer (&host);
+	if (out_port)
+		*out_port = port;
+	return TRUE;
+}
+
 /* Parse a boolean value as it is accepted for the allow-ipv6 setting.
  * Returns FALSE if the value is not a valid boolean. */
 static gboolean

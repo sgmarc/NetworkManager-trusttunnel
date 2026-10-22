@@ -46,8 +46,19 @@ shared_libnm_trusttunnel_core_la_LIBADD = \
 # Backend VPN daemon
 ###############################################################################
 
-libexec_PROGRAMS = nm-trusttunnel-service
-dist_libexec_SCRIPTS = auth-dialog/nm-trusttunnel-auth-dialog
+libexec_PROGRAMS = nm-trusttunnel-service \
+	auth-dialog/nm-trusttunnel-auth-dialog
+
+auth_dialog_nm_trusttunnel_auth_dialog_SOURCES = \
+	auth-dialog/main.c
+
+auth_dialog_nm_trusttunnel_auth_dialog_CPPFLAGS = \
+	$(GIO_CFLAGS) \
+	-I$(top_srcdir) \
+	-I$(top_srcdir)/shared
+
+auth_dialog_nm_trusttunnel_auth_dialog_LDADD = \
+	$(GIO_LIBS)
 
 nm_trusttunnel_service_SOURCES = \
 	src/nm-trusttunnel-service.c \
@@ -100,7 +111,8 @@ properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_CFLAGS = \
 properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_LIBADD = \
 	$(GTK_LIBS) \
 	$(LIBNM_LIBS) \
-	$(LIBNMA_LIBS)
+	$(LIBNMA_LIBS) \
+	shared/libnm-trusttunnel-core.la
 
 properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_LDFLAGS = \
 	-avoid-version -module
@@ -124,7 +136,8 @@ properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_CFLAGS = \
 properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_LIBADD = \
 	$(GTK4_LIBS) \
 	$(LIBNM_LIBS) \
-	$(LIBNMA_GTK4_LIBS)
+	$(LIBNMA_GTK4_LIBS) \
+	shared/libnm-trusttunnel-core.la
 
 properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_LDFLAGS = \
 	-avoid-version -module

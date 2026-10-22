@@ -1,6 +1,7 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 #include "nm-default.h"
 #include "nm-trusttunnel-editor.h"
+#include "nm-trusttunnel-config.h"
 
 #include <gtk/gtk.h>
 
@@ -16,7 +17,8 @@ static void trusttunnel_editor_interface_init (NMVpnEditorInterface *iface_class
 
 typedef struct {
 	GtkWidget *widget;
-	GtkWidget *server_entry;
+	GtkWidget *gateway_entry;
+	GtkWidget *protocol_combo;
 	GtkWidget *username_entry;
 	GtkWidget *password_entry;
 } TrusttunnelEditorPrivate;
@@ -50,6 +52,9 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 {
 	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (iface);
 	NMSettingVpn *s_vpn;
+	const char *gateway;
+	g_autofree char *host = NULL;
+	guint16 port = 0;
 
 	s_vpn = nm_connection_get_setting_vpn (connection);
 	if (!s_vpn) {
@@ -61,8 +66,27 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 	              NM_SETTING_VPN_SERVICE_TYPE, NM_DBUS_SERVICE_TRUSTTUNNEL,
 	              NULL);
 
-	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER,
-	               entry_get_text (priv->server_entry));
+	gateway = entry_get_text (priv->gateway_entry);
+	if (!nm_trusttunnel_config_parse_gateway (gateway, &host, &port)) {
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             _("Invalid gateway \"%s\": expected host or host:port"),
+		             gateway);
+		return FALSE;
+	}
+
+	/* The host doubles as the TLS server name; the port, when given, is
+	 * kept in its own data item — even the default 443, so that what the
+	 * user typed stays visible in the editor. */
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER, host);
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ADDRESS, host);
+	if (port)
+		set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PORT, g_strdup_printf ("%u", port));
+	else
+		nm_setting_vpn_remove_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PORT);
+
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL,
+	               gtk_combo_box_get_active_id (GTK_COMBO_BOX (priv->protocol_combo)));
+
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME,
 	               entry_get_text (priv->username_entry));
 
@@ -110,11 +134,22 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_container_set_border_width (GTK_CONTAINER (grid), 12);
 #endif
 
-	label = gtk_label_new (_("Server:"));
+	label = gtk_label_new (_("Gateway:"));
 	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->server_entry = gtk_entry_new ();
+	priv->gateway_entry = gtk_entry_new ();
+	gtk_entry_set_placeholder_text (GTK_ENTRY (priv->gateway_entry), _("host or host:port"));
 	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->server_entry, 1, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->gateway_entry, 1, row, 1, 1);
+	row++;
+
+	label = gtk_label_new (_("Protocol:"));
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	priv->protocol_combo = gtk_combo_box_text_new ();
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http3", "QUIC");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http2", "HTTP/2");
+	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), "http2");
+	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
+	gtk_grid_attach (GTK_GRID (grid), priv->protocol_combo, 1, row, 1, 1);
 	row++;
 
 	label = gtk_label_new (_("Username:"));
@@ -133,9 +168,37 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	row++;
 
 	{
-		const char *val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER);
-		if (val)
-			entry_set_text (priv->server_entry, val);
+		const char *addr = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ADDRESS);
+		const char *val;
+		guint16 port = 0;
+		g_autofree char *gateway = NULL;
+
+		if (!addr || !*addr)
+			addr = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_SERVER);
+
+		/* Show the port whenever the user gave one, including 443. */
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PORT);
+		if (val && *val) {
+			guint64 parsed = g_ascii_strtoull (val, NULL, 10);
+
+			if (parsed > 0 && parsed <= G_MAXUINT16)
+				port = (guint16) parsed;
+		}
+		if (port) {
+			if (addr && *addr) {
+				if (addr[0] != '[' && strchr (addr, ':'))
+					gateway = g_strdup_printf ("[%s]:%u", addr, port);
+				else
+					gateway = g_strdup_printf ("%s:%u", addr, port);
+			}
+		}
+
+		if (addr && *addr)
+			entry_set_text (priv->gateway_entry, gateway ? gateway : addr);
+
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL);
+		gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo),
+		                             g_strcmp0 (val, "http3") == 0 ? "http3" : "http2");
 
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME);
 		if (val)
@@ -150,7 +213,8 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 
 	/* Connect only after populating, so that filling the initial values is
 	 * not reported as a user modification. */
-	g_signal_connect (priv->server_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->gateway_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->protocol_combo, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->password_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 

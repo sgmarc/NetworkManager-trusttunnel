@@ -37,6 +37,13 @@ char                 *nm_trusttunnel_config_to_toml      (const NMTTrusttunnelCo
                                                          GError **error);
 /* Resolvers used when neither the daemon nor the profile provides any. */
 const char *const    *nm_trusttunnel_config_default_dns_servers (void);
+
+/* Split a "host", "host:port" or "[v6]:port" gateway into its host part
+ * and, when present, its port. Returns FALSE for an unparsable gateway.
+ * Either out parameter may be NULL. The host is owned by the caller. */
+gboolean              nm_trusttunnel_config_parse_gateway (const char *gateway,
+                                                          char **out_host,
+                                                          guint16 *out_port);
 /* Read an external TOML file. This may only be called from a user session
  * (editor or import); the root service must never use it. */
 char                 *nm_trusttunnel_config_file_to_toml (const char *path,

@@ -62,4 +62,6 @@ cscope.*
 auth-dialog/nm-trusttunnel-auth-dialog
 properties/resources.c
 properties/resources.h
-gtk4/
+gtk4/resources.c
+# the GTK4 UI file is maintained by hand; only the generated resource is ignored
+!gtk4/nm-trusttunnel-dialog.ui

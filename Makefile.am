@@ -60,16 +60,11 @@ properties/resources.h: properties/gresource.xml
 properties/resources.c: properties/gresource.xml $(GLIB_COMPILE_RESOURCES_XML)
 	$(AM_V_GEN) $(GLIB_COMPILE_RESOURCES) $< --target=$@ --sourcedir=$(srcdir)/properties --generate-source --internal
 
-gtk4/nm-trusttunnel-dialog.ui: $(srcdir)/properties/nm-trusttunnel-dialog.ui
-	@mkdir -p $(builddir)/gtk4
-	$(AM_V_GEN) gtk4-builder-tool simplify --3to4 $< >$@
-
-gtk4/resources.c: properties/gresource.xml $(GLIB_COMPILE_RESOURCES_XML)
+gtk4/resources.c: properties/gresource.xml gtk4/nm-trusttunnel-dialog.ui
 	@mkdir -p $(builddir)/gtk4
 	$(AM_V_GEN) $(GLIB_COMPILE_RESOURCES) $< --target=$@ --sourcedir=$(srcdir)/gtk4 --sourcedir=$(builddir)/gtk4 --generate-source --internal
 
-CLEANFILES += properties/resources.c properties/resources.h \
-	gtk4/resources.c gtk4/nm-trusttunnel-dialog.ui
+CLEANFILES += properties/resources.c properties/resources.h gtk4/resources.c
 
 auth_dialog_nm_trusttunnel_auth_dialog_SOURCES = \
 	auth-dialog/main.c
@@ -204,4 +199,5 @@ EXTRA_DIST = \
 	autogen.sh \
 	shared/nm-default.h \
 	properties/gresource.xml \
-	properties/nm-trusttunnel-dialog.ui
+	properties/nm-trusttunnel-dialog.ui \
+	gtk4/nm-trusttunnel-dialog.ui

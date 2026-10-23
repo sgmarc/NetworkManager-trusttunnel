@@ -53,6 +53,55 @@ set_data_item (NMSettingVpn *s_vpn, const char *key, const char *value)
 		nm_setting_vpn_remove_data_item (s_vpn, key);
 }
 
+
+
+/* GTK4 signature for "notify::selected"; the extra GParamSpec argument
+ * must not land in entry_changed_cb's user data slot. */
+static void
+entry_changed_notify_cb (GObject *dropdown G_GNUC_UNUSED,
+                         GParamSpec *pspec G_GNUC_UNUSED, gpointer user_data)
+{
+	g_signal_emit_by_name (user_data, "changed");
+}
+
+/* Protocol ids in display order; they are the values the daemon
+ * expects in upstream_protocol. */
+static const char *const protocol_ids[] = { "http3", "http2" };
+
+#define N_PROTOCOLS G_N_ELEMENTS (protocol_ids)
+
+static const char *
+protocol_get_active (TrusttunnelEditorPrivate *priv)
+{
+#if GTK_CHECK_VERSION (4, 0, 0)
+	guint idx = gtk_drop_down_get_selected (GTK_DROP_DOWN (priv->protocol_combo));
+
+	return (idx < N_PROTOCOLS) ? protocol_ids[idx] : "http2";
+#else
+	return gtk_combo_box_get_active_id (GTK_COMBO_BOX (priv->protocol_combo));
+#endif
+}
+
+static void
+protocol_set_active (TrusttunnelEditorPrivate *priv, const char *protocol)
+{
+	int i;
+
+	for (i = 0; i < (int) N_PROTOCOLS; i++) {
+		if (g_strcmp0 (protocol, protocol_ids[i]) == 0)
+			break;
+	}
+	if (i == (int) N_PROTOCOLS)
+		i = 1; /* http2 — the default */
+
+#if GTK_CHECK_VERSION (4, 0, 0)
+	gtk_drop_down_set_selected (GTK_DROP_DOWN (priv->protocol_combo), (guint) i);
+#else
+	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo),
+	                             protocol_ids[i]);
+#endif
+}
+
 static gboolean
 update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 {
@@ -91,7 +140,7 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 		nm_setting_vpn_remove_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PORT);
 
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL,
-	               gtk_combo_box_get_active_id (GTK_COMBO_BOX (priv->protocol_combo)));
+	               protocol_get_active (priv));
 
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CUSTOM_SNI,
 	               entry_get_text (priv->sni_entry));
@@ -300,17 +349,32 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	priv->builder = builder;
 #undef GET_WIDGET
 
-	/* GtkComboBoxText items cannot carry ids in the .ui file in a way that
-	 * works for both GTK3 and GTK4, so they are filled in here. The ids are
-	 * the values the daemon expects in upstream_protocol. */
+	/* Protocol items: the ids are the values the daemon expects in
+	 * upstream_protocol. GTK3 shows them in a GtkComboBoxText; GTK4
+	 * uses the modern GtkDropDown — same ids, same order. */
+#if GTK_CHECK_VERSION (4, 0, 0)
+	{
+		GtkDropDown *dropdown = GTK_DROP_DOWN (priv->protocol_combo);
+		GtkStringList *list;
+		GtkExpression *expr;
+
+		list = gtk_string_list_new ((const char *const[]) { "QUIC", "HTTP/2", NULL });
+		gtk_drop_down_set_model (dropdown, G_LIST_MODEL (list));
+		g_object_unref (list);
+
+		expr = gtk_property_expression_new (GTK_TYPE_STRING_OBJECT, NULL, "string");
+		gtk_drop_down_set_expression (dropdown, expr);
+		gtk_expression_unref (expr);
+
+		gtk_drop_down_set_selected (dropdown, 1u); /* HTTP/2 */
+	}
+#else
 	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http3", "QUIC");
-	g_print ("DBG a2\n");
 	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http2", "HTTP/2");
-	g_print ("DBG a3\n");
 	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), "http2");
+#endif
 
 	g_signal_connect_swapped (choose, "clicked", G_CALLBACK (cert_choose_cb), self);
-	g_signal_connect_swapped (clear, "clicked", G_CALLBACK (cert_clear_cb), self);
 
 	{
 		const char *addr = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ADDRESS);
@@ -342,8 +406,7 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 			entry_set_text (priv->gateway_entry, gateway ? gateway : addr);
 
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL);
-		gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo),
-		                             g_strcmp0 (val, "http3") == 0 ? "http3" : "http2");
+		protocol_set_active (priv, val);
 
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CUSTOM_SNI);
 		if (val)
@@ -384,7 +447,13 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	/* Connect only after populating, so that filling the initial values is
 	 * not reported as a user modification. */
 	g_signal_connect (priv->gateway_entry, "changed", G_CALLBACK (entry_changed_cb), self);
-	g_signal_connect (priv->protocol_combo, "changed", G_CALLBACK (entry_changed_cb), self);
+#if GTK_CHECK_VERSION (4, 0, 0)
+	g_signal_connect (priv->protocol_combo, "notify::selected",
+	                  G_CALLBACK (entry_changed_notify_cb), self);
+#else
+	g_signal_connect (priv->protocol_combo, "changed",
+	                  G_CALLBACK (entry_changed_cb), self);
+#endif
 	g_signal_connect (priv->sni_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->client_random_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);

@@ -6,6 +6,9 @@
 #endif
 
 #include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #include <glib.h>
 #include <NetworkManager.h>
@@ -92,6 +95,109 @@ is_valid_endpoint_host (const char *host)
 		default:
 			break;
 		}
+	}
+
+	return TRUE;
+}
+
+static gboolean
+is_hex_string (const char *s, gsize len)
+{
+	gsize i;
+
+	if (len == 0 || (len % 2) != 0)
+		return FALSE;
+
+	for (i = 0; i < len; i++) {
+		if (!g_ascii_isxdigit ((guchar) s[i]))
+			return FALSE;
+	}
+
+	return TRUE;
+}
+
+/* The client random follows the Flutter client format: an even-length
+ * hex string, optionally followed by "/" and an equally long hex mask.
+ * The whole value is capped at NM_TRUSTTUNNEL_MAX_FIELD_LENGTH. Empty
+ * is valid — the field is optional. */
+gboolean
+nm_trusttunnel_config_is_valid_client_random (const char *value)
+{
+	const char *slash;
+
+	if (!value || !*value)
+		return TRUE;
+
+	if (strlen (value) > NM_TRUSTTUNNEL_MAX_FIELD_LENGTH)
+		return FALSE;
+
+	slash = strchr (value, '/');
+	if (slash) {
+		if (strchr (slash + 1, '/'))
+			return FALSE;
+
+		/* The mask must have the same length as the random. */
+		if (strlen (slash + 1) != (size_t) (slash - value))
+			return FALSE;
+
+		return is_hex_string (value, slash - value) &&
+		       is_hex_string (slash + 1, strlen (slash + 1));
+	}
+
+	return is_hex_string (value, strlen (value));
+}
+
+static gboolean
+is_valid_cidr (const char *cidr)
+{
+	const char *slash = strchr (cidr, '/');
+	gsize addr_len;
+	const char *digits;
+	struct in6_addr v6;
+	struct in_addr v4;
+	g_autofree char *addr = NULL;
+	gulong prefix;
+
+	if (!slash)
+		return FALSE;
+
+	addr_len = (gsize) (slash - cidr);
+	if (addr_len == 0 || addr_len >= INET_ADDRSTRLEN)
+		return FALSE;
+
+	/* The prefix must be a bare decimal number. */
+	digits = slash + 1;
+	if (!*digits)
+		return FALSE;
+	for (; *digits; digits++) {
+		if (!g_ascii_isdigit ((guchar) *digits))
+			return FALSE;
+	}
+	prefix = strtoul (slash + 1, NULL, 10);
+
+	/* inet_pton wants the bare address literal. */
+	addr = g_strndup (cidr, addr_len);
+	if (strchr (addr, ':')) {
+		return inet_pton (AF_INET6, addr, &v6) == 1 && prefix <= 128;
+	}
+	return inet_pton (AF_INET, addr, &v4) == 1 && prefix <= 32;
+}
+
+gboolean
+nm_trusttunnel_config_is_valid_excluded_routes (const char *value)
+{
+	g_auto(GStrv) tokens = NULL;
+	gsize i;
+
+	if (!value || !*value)
+		return TRUE;
+
+	tokens = g_strsplit (value, ",", -1);
+	for (i = 0; tokens[i]; i++) {
+		g_autofree char *token = g_strstrip (g_strdup (tokens[i]));
+
+		if (!*token || !is_valid_cidr (token))
+			return FALSE;
 	}
 
 	return TRUE;
@@ -276,6 +382,63 @@ parse_port (const char *value, guint16 *out_port)
 	return TRUE;
 }
 
+gboolean
+nm_trusttunnel_config_parse_gateway (const char *gateway, char **out_host, guint16 *out_port)
+{
+	g_autofree char *host = NULL;
+	g_autofree char *copy = NULL;
+	guint16 port = 0;
+	const char *colon;
+
+	if (out_host)
+		*out_host = NULL;
+	if (out_port)
+		*out_port = 0;
+
+	if (!gateway)
+		return FALSE;
+
+	/* Never strip in place: the input may be read-only memory. */
+	gateway = copy = g_strdup (gateway);
+	g_strstrip (copy);
+	if (!*copy)
+		return FALSE;
+
+	if (gateway[0] == '[') {
+		const char *end = strchr (gateway, ']');
+
+		if (!end)
+			return FALSE;
+		host = g_strndup (gateway + 1, end - gateway - 1);
+		if (end[1] == ':') {
+			if (!parse_port (end + 2, &port))
+				return FALSE;
+		} else if (end[1] != '\0') {
+			return FALSE;
+		}
+	} else {
+		colon = strrchr (gateway, ':');
+		/* A single colon separates the port; multiple colons mean an
+		 * unbracketed IPv6 address. */
+		if (colon && strchr (gateway, ':') == colon) {
+			host = g_strndup (gateway, colon - gateway);
+			if (!parse_port (colon + 1, &port))
+				return FALSE;
+		} else {
+			host = g_strdup (gateway);
+		}
+	}
+
+	if (!is_valid_endpoint_host (host))
+		return FALSE;
+
+	if (out_host)
+		*out_host = g_steal_pointer (&host);
+	if (out_port)
+		*out_port = port;
+	return TRUE;
+}
+
 /* Parse a boolean value as it is accepted for the allow-ipv6 setting.
  * Returns FALSE if the value is not a valid boolean. */
 static gboolean
@@ -389,11 +552,16 @@ split_dns_servers (const char *dns_servers)
 	char **list;
 	GPtrArray *result;
 	guint i;
+	g_autofree char *normalized = NULL;
 
 	if (!dns_servers || !*dns_servers)
 		return NULL;
 
-	list = g_strsplit (dns_servers, ",", -1);
+	/* Values are stored comma separated in vpn.data; the editor presents
+	 * them one per line, so normalize newlines to commas first. */
+	dns_servers = normalized = g_strdup (dns_servers);
+	g_strdelimit ((char *) normalized, "\n", ',');
+	list = g_strsplit (normalized, ",", -1);
 	result = g_ptr_array_new ();
 	for (i = 0; list[i]; i++) {
 		char *item = g_strstrip (list[i]);
@@ -461,9 +629,11 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn, GError **error)
 	if (value)
 		config->username = g_strdup (value);
 
-	value = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+	/* The password lives in vpn.data, matching the nmcli workflow
+	 * `vpn.data "password=..."`. A legacy secret is only a fallback. */
+	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 	if (!value || !*value)
-		value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+		value = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 	if (value)
 		config->password = g_strdup (value);
 
@@ -483,6 +653,38 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn, GError **error)
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CUSTOM_SNI);
 	if (value && *value)
 		config->custom_sni = g_strdup (value);
+
+	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+	if (value && *value) {
+		/* The daemon accepts a hex sequence with an optional "/mask" part. */
+		size_t len = strlen (value);
+		size_t i;
+
+		for (i = 0; i < len; i++) {
+			char c = value[i];
+
+			if (!g_ascii_isxdigit (c) && c != '/' && c != 'x' && c != 'X') {
+				g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+				             "Invalid value for setting \"%s\": expected hex",
+				             NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+				nm_trusttunnel_config_free (config);
+				return NULL;
+			}
+		}
+		if (len > 64) {
+			g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+			             "Invalid value for setting \"%s\": too long",
+			             NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+			nm_trusttunnel_config_free (config);
+			return NULL;
+		}
+		config->client_random = g_strdup (value);
+
+	}
+
+	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES);
+	if (value)
+		config->excluded_routes = g_strdup (value);
 
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM);
 	if (value && *value)
@@ -533,6 +735,8 @@ nm_trusttunnel_config_free (NMTTrusttunnelConfig *config)
 	g_free (config->password);
 	g_free (config->protocol);
 	g_free (config->custom_sni);
+	g_free (config->client_random);
+	g_free (config->excluded_routes);
 	g_free (config->cert_pem);
 	g_strfreev (config->dns_servers);
 	g_free (config->log_level);
@@ -598,6 +802,18 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 		return NULL;
 	}
 
+	if (!nm_trusttunnel_config_is_valid_client_random (config->client_random)) {
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+		return NULL;
+	}
+
+	if (!nm_trusttunnel_config_is_valid_excluded_routes (config->excluded_routes)) {
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES);
+		return NULL;
+	}
+
 	if (!is_valid_endpoint_host (config->server)) {
 		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
 		             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_SERVER);
@@ -639,6 +855,12 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 
 	if (config->custom_sni && *config->custom_sni)
 		g_string_append_printf (toml, "custom_sni = \"%s\"\n", escaped_custom_sni);
+
+	if (config->client_random && *config->client_random) {
+		g_autofree char *escaped_client_random = toml_escape (config->client_random);
+
+		g_string_append_printf (toml, "client_random = \"%s\"\n", escaped_client_random);
+	}
 
 	if (config->cert_pem && *config->cert_pem) {
 		/* A multiline literal string would be terminated by a """ sequence in
@@ -684,7 +906,29 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 	g_string_append (toml, "[listener.tun]\n");
 	g_string_append (toml, "managed = false\n");
 	g_string_append (toml, "included_routes = []\n");
-	g_string_append (toml, "excluded_routes = []\n");
+	{
+		/* The excluded prefixes bypass the tunnel via bypass routes that the
+		 * daemon installs through the physical network. The list arrives as
+		 * a comma-separated profile item and must be emitted as a TOML
+		 * array of escaped strings. */
+		g_auto(GStrv) tokens = NULL;
+		gboolean first = TRUE;
+		gsize i;
+
+		g_string_append (toml, "excluded_routes = [");
+		tokens = config->excluded_routes ? g_strsplit (config->excluded_routes, ",", -1) : NULL;
+		for (i = 0; tokens && tokens[i]; i++) {
+			g_autofree char *token = g_strstrip (g_strdup (tokens[i]));
+			g_autofree char *escaped = NULL;
+
+			if (!*token)
+				continue;
+			escaped = toml_escape (token);
+			g_string_append_printf (toml, "%s\"%s\"", first ? "" : ", ", escaped);
+			first = FALSE;
+		}
+		g_string_append (toml, "]\n");
+	}
 
 	g_free (escaped_server);
 	g_free (escaped_username);

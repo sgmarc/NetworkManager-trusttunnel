@@ -965,9 +965,9 @@ real_need_secrets (NMVpnServicePlugin *plugin,
 	if (config_file && *config_file)
 		return FALSE;
 
-	pw = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+	pw = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 	if (!pw || !*pw)
-		pw = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+		pw = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 	if (!pw || !*pw) {
 		*setting_name = NM_SETTING_VPN_SETTING_NAME;
 		return TRUE;

@@ -56,8 +56,11 @@ PKG_CHECK_MODULES(LIBNM, libnm >= 1.2.0)
 AC_SUBST(LIBNM_CFLAGS)
 AC_SUBST(LIBNM_LIBS)
 
+AC_PATH_PROG(GLIB_COMPILE_RESOURCES, glib-compile-resources)
+
+PKG_CHECK_MODULES(GTK, gtk+-3.0 >= 3.4)
+
 if test x"$with_gnome" != xno; then
-    PKG_CHECK_MODULES(GTK, gtk+-3.0 >= 3.4)
     PKG_CHECK_MODULES(LIBNMA, libnma >= 1.2.0)
 fi
 

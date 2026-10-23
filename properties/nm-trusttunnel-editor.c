@@ -638,6 +638,7 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		gtk_drop_down_set_selected (dropdown, (guint) PROTOCOL_DEFAULT_INDEX); /* HTTP/2 */
 	}
 #else
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "auto", "Auto");
 	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http3", "QUIC");
 	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http2", "HTTP/2");
 	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), protocol_ids[PROTOCOL_DEFAULT_INDEX]);

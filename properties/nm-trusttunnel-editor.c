@@ -24,6 +24,7 @@ typedef struct {
 	GtkWidget *cert_entry;
 	GtkWidget *cert_domain_entry;
 	char *cert_pem;
+	GtkBuilder *builder;
 	GtkWidget *username_entry;
 	GtkWidget *password_entry;
 } TrusttunnelEditorPrivate;
@@ -129,16 +130,6 @@ entry_changed_cb (GtkEditable *editable, gpointer user_data)
 	/* NMVpnEditor consumers (nm-connection-editor, gnome-control-center)
 	 * enable their Apply button when this signal is emitted. */
 	g_signal_emit_by_name (self, "changed");
-}
-
-static void
-box_append (GtkBox *box, GtkWidget *child)
-{
-#if GTK_CHECK_VERSION (4, 0, 0)
-	gtk_box_append (box, child);
-#else
-	gtk_box_pack_start (box, child, TRUE, TRUE, 0);
-#endif
 }
 
 static GtkWidget *
@@ -256,9 +247,10 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 {
 	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (self);
 	NMSettingVpn *s_vpn = nm_connection_get_setting_vpn (connection);
-	GtkWidget *grid;
-	GtkWidget *label;
-	int row = 0;
+	GtkBuilder *builder;
+	GError *error = NULL;
+	GtkWidget *choose;
+	GtkWidget *clear;
 
 	if (!s_vpn) {
 		s_vpn = (NMSettingVpn *) nm_setting_vpn_new ();
@@ -268,86 +260,44 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		nm_connection_add_setting (connection, NM_SETTING (s_vpn));
 	}
 
-	grid = gtk_grid_new ();
-	gtk_grid_set_row_spacing (GTK_GRID (grid), 10);
-	gtk_grid_set_column_spacing (GTK_GRID (grid), 12);
-#if !GTK_CHECK_VERSION (4, 0, 0)
-	gtk_container_set_border_width (GTK_CONTAINER (grid), 12);
-#endif
-
-	label = gtk_label_new (_("Gateway:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->gateway_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->gateway_entry, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Certificate domain:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->cert_domain_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->cert_domain_entry, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Custom SNI:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->sni_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->sni_entry, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Username:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->username_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->username_entry, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Password:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->password_entry = gtk_entry_new ();
-	gtk_entry_set_visibility (GTK_ENTRY (priv->password_entry), FALSE);
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->password_entry, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Protocol:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->protocol_combo = gtk_combo_box_text_new ();
-	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http3", "QUIC");
-	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http2", "HTTP/2");
-	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), "http2");
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->protocol_combo, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Client random:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	priv->client_random_entry = gtk_entry_new ();
-	gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-	gtk_grid_attach (GTK_GRID (grid), priv->client_random_entry, 1, row, 1, 1);
-	row++;
-
-	label = gtk_label_new (_("Certificate:"));
-	gtk_widget_set_halign (label, GTK_ALIGN_START);
-	{
-		GtkWidget *box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-		GtkWidget *choose = gtk_button_new_with_mnemonic (_("Choose _file…"));
-		GtkWidget *clear = gtk_button_new_with_mnemonic (_("_Clear"));
-
-		priv->cert_entry = gtk_entry_new ();
-		gtk_editable_set_editable (GTK_EDITABLE (priv->cert_entry), FALSE);
-		gtk_entry_set_placeholder_text (GTK_ENTRY (priv->cert_entry), _("system storage"));
-		gtk_widget_set_hexpand (priv->cert_entry, TRUE);
-		box_append (GTK_BOX (box), priv->cert_entry);
-		box_append (GTK_BOX (box), choose);
-		box_append (GTK_BOX (box), clear);
-		g_signal_connect_swapped (choose, "clicked", G_CALLBACK (cert_choose_cb), self);
-		g_signal_connect_swapped (clear, "clicked", G_CALLBACK (cert_clear_cb), self);
-		gtk_grid_attach (GTK_GRID (grid), label, 0, row, 1, 1);
-		gtk_grid_attach (GTK_GRID (grid), box, 1, row, 1, 1);
-		row++;
+	builder = gtk_builder_new ();
+	if (!gtk_builder_add_from_resource (builder,
+	                                    "/org/freedesktop/network-manager-trusttunnel/nm-trusttunnel-dialog.ui",
+	                                    &error)) {
+		g_warning ("failed to load the editor UI: %s", error->message);
+		g_clear_error (&error);
+		g_object_unref (builder);
+		return;
 	}
+
+#define GET_WIDGET(name) priv->name = GTK_WIDGET (gtk_builder_get_object (builder, #name))
+	GET_WIDGET (gateway_entry);
+	GET_WIDGET (cert_domain_entry);
+	GET_WIDGET (sni_entry);
+	GET_WIDGET (username_entry);
+	GET_WIDGET (password_entry);
+	GET_WIDGET (protocol_combo);
+	GET_WIDGET (client_random_entry);
+	GET_WIDGET (cert_entry);
+	choose = GTK_WIDGET (gtk_builder_get_object (builder, "cert_choose_button"));
+	clear = GTK_WIDGET (gtk_builder_get_object (builder, "cert_clear_button"));
+	priv->widget = GTK_WIDGET (gtk_builder_get_object (builder, "widget"));
+	/* The builder owns the widget tree; keep it for the editor's lifetime
+	 * (dispose frees it), exactly like NetworkManager-openvpn does. */
+	priv->builder = builder;
+#undef GET_WIDGET
+
+	/* GtkComboBoxText items cannot carry ids in the .ui file in a way that
+	 * works for both GTK3 and GTK4, so they are filled in here. The ids are
+	 * the values the daemon expects in upstream_protocol. */
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http3", "QUIC");
+	g_print ("DBG a2\n");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http2", "HTTP/2");
+	g_print ("DBG a3\n");
+	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), "http2");
+
+	g_signal_connect_swapped (choose, "clicked", G_CALLBACK (cert_choose_cb), self);
+	g_signal_connect_swapped (clear, "clicked", G_CALLBACK (cert_clear_cb), self);
 
 	{
 		const char *addr = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_ADDRESS);
@@ -424,13 +374,6 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->password_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->cert_domain_entry, "changed", G_CALLBACK (entry_changed_cb), self);
-
-#if GTK_CHECK_VERSION (4, 0, 0)
-	gtk_widget_set_visible (grid, TRUE);
-#else
-	gtk_widget_show_all (grid);
-#endif
-	priv->widget = grid;
 }
 
 NMVpnEditor *
@@ -447,8 +390,21 @@ trusttunnel_editor_init (TrusttunnelEditor *plugin)
 }
 
 static void
+trusttunnel_editor_dispose (GObject *object)
+{
+	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (object);
+
+	g_clear_pointer (&priv->builder, g_object_unref);
+
+	G_OBJECT_CLASS (trusttunnel_editor_parent_class)->dispose (object);
+}
+
+static void
 trusttunnel_editor_class_init (TrusttunnelEditorClass *req_class)
 {
+	GObjectClass *object_class = G_OBJECT_CLASS (req_class);
+
+	object_class->dispose = trusttunnel_editor_dispose;
 }
 
 static void

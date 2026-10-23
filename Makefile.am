@@ -49,6 +49,28 @@ shared_libnm_trusttunnel_core_la_LIBADD = \
 libexec_PROGRAMS = nm-trusttunnel-service \
 	auth-dialog/nm-trusttunnel-auth-dialog
 
+# The editor UI is embedded into the editor libraries as a GResource. The
+# GTK3 variant is the .ui file itself; the GTK4 one is converted at build
+# time with gtk4-builder-tool, like NetworkManager-openvpn does.
+GLIB_COMPILE_RESOURCES_XML = $(shell $(GLIB_COMPILE_RESOURCES) --sourcedir=$(srcdir)/properties --generate-dependencies $(srcdir)/properties/gresource.xml)
+
+properties/resources.h: properties/gresource.xml
+	$(AM_V_GEN) $(GLIB_COMPILE_RESOURCES) $< --target=$@ --sourcedir=$(srcdir)/properties --generate-header --internal
+
+properties/resources.c: properties/gresource.xml $(GLIB_COMPILE_RESOURCES_XML)
+	$(AM_V_GEN) $(GLIB_COMPILE_RESOURCES) $< --target=$@ --sourcedir=$(srcdir)/properties --generate-source --internal
+
+gtk4/nm-trusttunnel-dialog.ui: $(srcdir)/properties/nm-trusttunnel-dialog.ui
+	@mkdir -p $(builddir)/gtk4
+	$(AM_V_GEN) gtk4-builder-tool simplify --3to4 $< >$@
+
+gtk4/resources.c: properties/gresource.xml $(GLIB_COMPILE_RESOURCES_XML)
+	@mkdir -p $(builddir)/gtk4
+	$(AM_V_GEN) $(GLIB_COMPILE_RESOURCES) $< --target=$@ --sourcedir=$(srcdir)/gtk4 --sourcedir=$(builddir)/gtk4 --generate-source --internal
+
+CLEANFILES += properties/resources.c properties/resources.h \
+	gtk4/resources.c gtk4/nm-trusttunnel-dialog.ui
+
 auth_dialog_nm_trusttunnel_auth_dialog_SOURCES = \
 	auth-dialog/main.c
 
@@ -103,6 +125,10 @@ properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_SOURCES = \
 	properties/nm-trusttunnel-editor.c \
 	properties/nm-trusttunnel-editor.h
 
+nodist_properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_SOURCES = \
+	properties/resources.c \
+	properties/resources.h
+
 properties_libnm_gtk3_vpn_plugin_trusttunnel_editor_la_CFLAGS = \
 	$(GTK_CFLAGS) \
 	$(LIBNM_CFLAGS) \
@@ -127,6 +153,10 @@ plugin_LTLIBRARIES += properties/libnm-gtk4-vpn-plugin-trusttunnel-editor.la
 properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_SOURCES = \
 	properties/nm-trusttunnel-editor.c \
 	properties/nm-trusttunnel-editor.h
+
+nodist_properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_SOURCES = \
+	gtk4/resources.c \
+	properties/resources.h
 
 properties_libnm_gtk4_vpn_plugin_trusttunnel_editor_la_CFLAGS = \
 	$(GTK4_CFLAGS) \
@@ -170,4 +200,6 @@ EXTRA_DIST = \
 	nm-trusttunnel-service.name.in \
 	nm-trusttunnel-service.conf \
 	autogen.sh \
-	shared/nm-default.h
+	shared/nm-default.h \
+	properties/gresource.xml \
+	properties/nm-trusttunnel-dialog.ui

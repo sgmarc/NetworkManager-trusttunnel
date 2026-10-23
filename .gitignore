@@ -58,4 +58,8 @@ tests/*.trs
 tags
 TAGS
 cscope.*
+
 auth-dialog/nm-trusttunnel-auth-dialog
+properties/resources.c
+properties/resources.h
+gtk4/

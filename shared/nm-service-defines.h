@@ -18,6 +18,9 @@
 #define NM_TRUSTTUNNEL_KEY_PORT              "port"
 #define NM_TRUSTTUNNEL_KEY_USERNAME          "username"
 #define NM_TRUSTTUNNEL_KEY_PASSWORD          "password"
+/* Secret storage flags: "0" = saved in the connection file, "1" = owned
+ * by a secret agent (GNOME keyring, via the auth dialog). */
+#define NM_TRUSTTUNNEL_KEY_PASSWORD_FLAGS    "password-flags"
 #define NM_TRUSTTUNNEL_KEY_PROTOCOL          "protocol"
 #define NM_TRUSTTUNNEL_KEY_CUSTOM_SNI        "custom-sni"
 #define NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM     "client-random"

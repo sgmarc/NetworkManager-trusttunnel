@@ -112,12 +112,25 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_USERNAME,
 	               entry_get_text (priv->username_entry));
 
-	/* Keep it simple for the first prototype: the password is a plain data
-	 * item, exactly like `nmcli ... vpn.data "password=..."` stores it.
-	 * Drop any legacy stored secret so the two never diverge. */
-	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD,
-	               entry_get_text (priv->password_entry));
+	/* The password is an agent-owned secret: it is not stored in the
+	 * connection file; NetworkManager asks secret agents (GNOME keyring,
+	 * via our auth dialog) for it on activation. The field text typed in
+	 * the editor is passed to NM as a secret. Drop any legacy plain data
+	 * item so the two never diverge. */
 	nm_setting_vpn_remove_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD, NULL);
+	{
+		g_autofree char *flags = g_strdup_printf ("%u",
+		                                          (guint) NM_SETTING_SECRET_FLAG_AGENT_OWNED);
+
+		set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD_FLAGS, flags);
+	}
+	{
+		const char *password = entry_get_text (priv->password_entry);
+
+		if (password && *password)
+			nm_setting_vpn_add_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD, password);
+	}
 
 	return TRUE;
 }
@@ -358,9 +371,12 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		if (val)
 			entry_set_text (priv->username_entry, val);
 
-		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+		/* The password may live in vpn.secrets (the agent-owned storage
+		 * shown when NM hands the secrets over) with a plain data item
+		 * only as a legacy fallback. */
+		val = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 		if (!val)
-			val = nm_setting_vpn_get_secret (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
+			val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PASSWORD);
 		if (val)
 			entry_set_text (priv->password_entry, val);
 	}

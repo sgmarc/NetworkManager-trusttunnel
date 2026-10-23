@@ -981,13 +981,10 @@ real_new_secrets (NMVpnServicePlugin *plugin,
                   NMConnection *connection,
                   GError **error)
 {
-	/* trusttunneld cannot update the authentication of an established
-	 * HTTP/2 or QUIC session without tearing it down, so changing the
-	 * credentials requires a reconnect. */
-	g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
-	             "Changing TrustTunnel credentials requires a reconnect: "
-	             "trusttunneld cannot update the authentication of a live session");
-	return FALSE;
+	/* NetworkManager updates the connection with the secrets obtained from
+	 * the secret agent and calls Connect again; the secrets themselves are
+	 * consumed by real_connect(). */
+	return TRUE;
 }
 
 static void

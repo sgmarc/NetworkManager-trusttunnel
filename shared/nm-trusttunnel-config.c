@@ -162,7 +162,7 @@ is_valid_cidr (const char *cidr)
 		return FALSE;
 
 	addr_len = (gsize) (slash - cidr);
-	if (addr_len == 0 || addr_len >= INET_ADDRSTRLEN)
+	if (addr_len == 0 || addr_len >= INET6_ADDRSTRLEN)
 		return FALSE;
 
 	/* The prefix must be a bare decimal number. */

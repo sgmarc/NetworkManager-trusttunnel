@@ -557,6 +557,13 @@ test_excluded_routes (void)
 	/* IPv4 and IPv6 prefixes, spaces tolerated. */
 	g_assert_true (nm_trusttunnel_config_is_valid_excluded_routes ("192.168.0.0/16, 2001:db8::/32"));
 
+	/* Full (uncompressed) IPv6 form must be accepted, not cut by the
+	 * string-length bound. */
+	g_assert_true (nm_trusttunnel_config_is_valid_excluded_routes
+	               ("2001:0db8:85a3:0000:0000:8a2e:0370:7334/128"));
+	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes
+	                ("2001:0db8:85a3:0000:0000:8a2e:0370:7334/129"));
+
 	/* Rejects: no prefix, out-of-range prefix, garbage, empty token. */
 	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes ("10.0.0.0"));
 	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes ("10.0.0.0/33"));

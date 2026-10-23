@@ -2,11 +2,17 @@
 name=trusttunnel
 service=org.freedesktop.NetworkManager.trusttunnel
 program=@LIBEXECDIR@/nm-trusttunnel-service
-supports-multiple-connections=true
+# The daemon keeps a single session, so two connections of this type must not
+# be activated at the same time.
+supports-multiple-connections=false
 supports-safe-private-file-access=true
+# The auth dialog speaks the new-style protocol: the helper prints a
+# keyfile ("VPN Plugin UI") and the shell shows its own password dialog.
+supports-external-ui-mode=true
 
 [libnm]
 plugin=@PLUGINDIR@/libnm-vpn-plugin-trusttunnel.so
 
 [GNOME]
-properties=@PLUGINDIR@/libnm-gtk3-vpn-plugin-trusttunnel-editor
+auth-dialog=@LIBEXECDIR@/nm-trusttunnel-auth-dialog
+properties=@PLUGINDIR@/libnm-vpn-plugin-trusttunnel.so

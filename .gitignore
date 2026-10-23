@@ -44,6 +44,13 @@ nm-trusttunnel-service
 nm-trusttunnel-service.name
 NetworkManager-trusttunnel-*.tar*
 
+# Autotools test artifacts
+test-driver
+test-suite.log
+tests/test-config
+tests/*.log
+tests/*.trs
+
 # Editor backups and tags
 *~
 *.swp
@@ -51,3 +58,10 @@ NetworkManager-trusttunnel-*.tar*
 tags
 TAGS
 cscope.*
+
+auth-dialog/nm-trusttunnel-auth-dialog
+properties/resources.c
+properties/resources.h
+gtk4/resources.c
+# the GTK4 UI file is maintained by hand; only the generated resource is ignored
+!gtk4/nm-trusttunnel-dialog.ui

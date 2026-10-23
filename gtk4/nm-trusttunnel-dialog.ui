@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkNotebook" id="widget">
+    <!-- Connection -->
+    <child>
+      <object class="GtkGrid">
+        <property name="margin_start">12</property>
+        <property name="margin_end">12</property>
+        <property name="margin_top">12</property>
+        <property name="margin_bottom">12</property>
+        <property name="row_spacing">10</property>
+        <property name="column_spacing">12</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Gateway:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="gateway_entry">
+            <property name="hexpand">1</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Protocol:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">1</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkDropDown" id="protocol_combo">
+            <property name="hexpand">1</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">1</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Username:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">2</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="username_entry">
+            <property name="hexpand">1</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">2</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Password:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">3</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="password_entry">
+            <property name="hexpand">1</property>
+            <property name="visibility">0</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">3</property>
+            </layout>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child type="tab">
+      <object class="GtkLabel">
+        <property name="label" translatable="1">Connection</property>
+      </object>
+    </child>
+    <!-- Security -->
+    <child>
+      <object class="GtkGrid">
+        <property name="margin_start">12</property>
+        <property name="margin_end">12</property>
+        <property name="margin_top">12</property>
+        <property name="margin_bottom">12</property>
+        <property name="row_spacing">10</property>
+        <property name="column_spacing">12</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Certificate:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="cert_box">
+            <property name="spacing">6</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">0</property>
+            </layout>
+            <child>
+              <object class="GtkEntry" id="cert_entry">
+                <property name="hexpand">1</property>
+                <property name="editable">0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="cert_choose_button">
+                <property name="label" translatable="1">Choose file…</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="cert_clear_button">
+                <property name="label" translatable="1">Clear</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Certificate domain:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">1</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="cert_domain_entry">
+            <property name="hexpand">1</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">1</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Custom SNI:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">2</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="sni_entry">
+            <property name="hexpand">1</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">2</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Client random:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">3</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="client_random_entry">
+            <property name="hexpand">1</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">3</property>
+            </layout>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child type="tab">
+      <object class="GtkLabel">
+        <property name="label" translatable="1">Security</property>
+      </object>
+    </child>
+    <!-- Bypass -->
+    <child>
+      <object class="GtkGrid">
+        <property name="margin_start">12</property>
+        <property name="margin_end">12</property>
+        <property name="margin_top">12</property>
+        <property name="margin_bottom">12</property>
+        <property name="row_spacing">10</property>
+        <property name="column_spacing">12</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Excluded routes:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="excluded_entry">
+            <property name="hexpand">1</property>
+            <property name="tooltip-text" translatable="1">Comma-separated networks that bypass the tunnel, e.g. 192.168.0.0/16</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child type="tab">
+      <object class="GtkLabel">
+        <property name="label" translatable="1">Bypass</property>
+      </object>
+    </child>
+    <!-- Advanced -->
+    <child>
+      <object class="GtkGrid">
+        <property name="margin_start">12</property>
+        <property name="margin_end">12</property>
+        <property name="margin_top">12</property>
+        <property name="margin_bottom">12</property>
+        <property name="row_spacing">10</property>
+        <property name="column_spacing">12</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="1">Log level:</property>
+            <property name="xalign">0</property>
+            <layout>
+              <property name="column">0</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="GtkDropDown" id="log_level_combo">
+            <property name="hexpand">1</property>
+            <layout>
+              <property name="column">1</property>
+              <property name="row">0</property>
+            </layout>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child type="tab">
+      <object class="GtkLabel">
+        <property name="label" translatable="1">Advanced</property>
+      </object>
+    </child>
+  </object>
+</interface>

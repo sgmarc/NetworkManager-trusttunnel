@@ -18,10 +18,15 @@
 #define NM_TRUSTTUNNEL_KEY_PORT              "port"
 #define NM_TRUSTTUNNEL_KEY_USERNAME          "username"
 #define NM_TRUSTTUNNEL_KEY_PASSWORD          "password"
+/* Secret storage flags: "0" = saved in the connection file, "1" = owned
+ * by a secret agent (GNOME keyring, via the auth dialog). */
+#define NM_TRUSTTUNNEL_KEY_PASSWORD_FLAGS    "password-flags"
 #define NM_TRUSTTUNNEL_KEY_PROTOCOL          "protocol"
 #define NM_TRUSTTUNNEL_KEY_CUSTOM_SNI        "custom-sni"
+#define NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM     "client-random"
 #define NM_TRUSTTUNNEL_KEY_CERT_PEM          "cert-pem"
 #define NM_TRUSTTUNNEL_KEY_DNS_SERVERS       "dns-servers"
+#define NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES   "excluded-routes"
 #define NM_TRUSTTUNNEL_KEY_ALLOW_IPV6        "allow-ipv6"
 #define NM_TRUSTTUNNEL_KEY_CLIENT_BINARY     "client-binary"
 #define NM_TRUSTTUNNEL_KEY_LOG_LEVEL         "log-level"
@@ -30,5 +35,52 @@
 #define NM_TRUSTTUNNEL_DEFAULT_PROTOCOL      "http2"
 #define NM_TRUSTTUNNEL_DEFAULT_LOG_LEVEL     "info"
 #define NM_TRUSTTUNNEL_DEFAULT_CLIENT_BINARY "trusttunnel_client"
+
+/* Maximum length of the client random field, in characters. Matches the
+ * limit used by the TrustTunnel Flutter client. */
+#define NM_TRUSTTUNNEL_MAX_FIELD_LENGTH      64
+
+/* Comma-separated CIDR prefixes that must bypass the tunnel. This is the
+ * default the TrustTunnel Flutter client wizard configures: local networks,
+ * link-local and multicast, so LAN resources keep working under a full
+ * tunnel. */
+#define NM_TRUSTTUNNEL_DEFAULT_EXCLUDED_ROUTES \
+	"0.0.0.0/8,10.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,224.0.0.0/3"
+
+/* Upstream protocol values accepted by trusttunneld.
+ * See TrustTunnelClient/trusttunnel/src/config.cpp (UPSTREAM_PROTO_MAP).
+ * Note that "quic" is not a daemon value, it is a legacy alias for "http3". */
+#define NM_TRUSTTUNNEL_PROTOCOL_HTTP2         "http2"
+#define NM_TRUSTTUNNEL_PROTOCOL_HTTP3         "http3"
+#define NM_TRUSTTUNNEL_PROTOCOL_AUTO          "auto"
+
+/* Session states reported by the StateChanged(i) signal of trusttunneld.
+ * See TrustTunnelClient/platform/linux/src/dbus_interface.h (VpnState). */
+typedef enum {
+	NM_TRUSTTUNNEL_STATE_DISCONNECTED    = 0,
+	NM_TRUSTTUNNEL_STATE_CONNECTING      = 1,
+	NM_TRUSTTUNNEL_STATE_CONNECTED       = 2,
+	NM_TRUSTTUNNEL_STATE_WAITING_RECOVERY = 3,
+	NM_TRUSTTUNNEL_STATE_RECOVERING       = 4,
+	NM_TRUSTTUNNEL_STATE_WAITING_NETWORK  = 5,
+} NMTTrusttunnelState;
+
+/* Error codes returned by the Start(s)/Stop() methods of trusttunneld.
+ * See TrustTunnelClient/platform/linux/src/dbus_interface.h (VpnError). */
+typedef enum {
+	NM_TRUSTTUNNEL_ERROR_SUCCESS         = 0,
+	NM_TRUSTTUNNEL_ERROR_ALREADY_RUNNING = 1,
+	NM_TRUSTTUNNEL_ERROR_INVALID_CONFIG  = 2,
+} NMTTrusttunnelError;
+
+/* Timeouts (seconds) used by the plugin. */
+#define NM_TRUSTTUNNEL_DBUS_TIMEOUT_SEC   15
+#define NM_TRUSTTUNNEL_STOP_TIMEOUT_SEC    3
+#define NM_TRUSTTUNNEL_CONNECT_TIMEOUT_SEC 30
+
+/* Delay before the Start request is repeated after the daemon reported the
+ * session as disconnected. The daemon releases the session only after it has
+ * sent the signal, so the request must not be repeated immediately. */
+#define NM_TRUSTTUNNEL_RETRY_DELAY_MS     500
 
 #endif /* NM_TRUSTTUNNEL_SERVICE_DEFINES_H */

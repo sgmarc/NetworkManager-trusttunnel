@@ -3,6 +3,8 @@
 #include "nm-trusttunnel-editor-plugin.h"
 #include "nm-utils/nm-vpn-plugin-utils.h"
 
+#include <gmodule.h>
+
 #define TRUSTTUNNEL_PLUGIN_NAME    _("TrustTunnel")
 #define TRUSTTUNNEL_PLUGIN_DESC    _("Client for TrustTunnel protocol (HTTP/2, QUIC)")
 #define TRUSTTUNNEL_PLUGIN_SERVICE NM_DBUS_SERVICE_TRUSTTUNNEL
@@ -23,75 +25,10 @@ G_DEFINE_TYPE_EXTENDED (TrusttunnelEditorPlugin, trusttunnel_editor_plugin, G_TY
 static guint32
 get_capabilities (NMVpnEditorPlugin *iface)
 {
-	return (NM_VPN_EDITOR_PLUGIN_CAPABILITY_IMPORT |
-	        NM_VPN_EDITOR_PLUGIN_CAPABILITY_EXPORT |
-	        NM_VPN_EDITOR_PLUGIN_CAPABILITY_IPV6);
-}
-
-static NMConnection *
-import (NMVpnEditorPlugin *iface, const char *path, GError **error)
-{
-	NMConnection *connection = NULL;
-	NMSettingConnection *s_con;
-	NMSettingVpn *s_vpn;
-	char *basename;
-
-	connection = nm_simple_connection_new ();
-	s_con = (NMSettingConnection *) nm_setting_connection_new ();
-	s_vpn = (NMSettingVpn *) nm_setting_vpn_new ();
-
-	basename = g_path_get_basename (path);
-	g_object_set (s_con,
-	              NM_SETTING_CONNECTION_ID, basename,
-	              NM_SETTING_CONNECTION_TYPE, NM_SETTING_VPN_SETTING_NAME,
-	              NULL);
-	g_free (basename);
-
-	g_object_set (s_vpn,
-	              NM_SETTING_VPN_SERVICE_TYPE, NM_DBUS_SERVICE_TRUSTTUNNEL,
-	              NULL);
-
-	nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CONFIG_FILE, path);
-
-	nm_connection_add_setting (connection, NM_SETTING (s_con));
-	nm_connection_add_setting (connection, NM_SETTING (s_vpn));
-
-	return connection;
-}
-
-static gboolean
-export (NMVpnEditorPlugin *iface,
-        const char *path,
-        NMConnection *connection,
-        GError **error)
-{
-	NMSettingVpn *s_vpn = nm_connection_get_setting_vpn (connection);
-	if (!s_vpn) {
-		g_set_error (error, NMV_EDITOR_PLUGIN_ERROR, NMV_EDITOR_PLUGIN_ERROR_FAILED,
-		             "No VPN settings found");
-		return FALSE;
-	}
-	const char *config_file = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CONFIG_FILE);
-	if (config_file && g_file_test (config_file, G_FILE_TEST_EXISTS)) {
-		char *content = NULL;
-		gsize len = 0;
-		if (g_file_get_contents (config_file, &content, &len, error)) {
-			gboolean ret = g_file_set_contents (path, content, len, error);
-			g_free (content);
-			return ret;
-		}
-		return FALSE;
-	}
-	return TRUE;
-}
-
-static char *
-get_suggested_filename (NMVpnEditorPlugin *iface, NMConnection *connection)
-{
-	NMSettingConnection *s_con = nm_connection_get_setting_connection (connection);
-	if (!s_con)
-		return NULL;
-	return g_strdup_printf ("%s.toml", nm_setting_connection_get_id (s_con));
+	/* Import and export are temporarily unavailable: both used to pass a file
+	 * path to the root service, which must not read user supplied files. They
+	 * will return once the TOML is parsed and validated in the user session. */
+	return NM_VPN_EDITOR_PLUGIN_CAPABILITY_IPV6;
 }
 
 static NMVpnEditor *
@@ -107,7 +44,24 @@ _call_editor_factory (gpointer factory,
 static NMVpnEditor *
 get_editor (NMVpnEditorPlugin *iface, NMConnection *connection, GError **error)
 {
-	return nm_vpn_plugin_utils_load_editor ("libnm-gtk3-vpn-plugin-trusttunnel-editor.so",
+	gpointer gtk3_only_symbol;
+	GModule *self_module;
+	const char *editor;
+
+	/* The editor libraries are built against different GTK major versions.
+	 * Pick the one matching the toolkit that is already loaded in this
+	 * process: a GTK3 editor cannot live inside a GTK4 process such as
+	 * gnome-control-center and vice versa (see NetworkManager-openvpn). */
+	self_module = g_module_open (NULL, 0);
+	g_module_symbol (self_module, "gtk_container_add", &gtk3_only_symbol);
+	g_module_close (self_module);
+
+	if (gtk3_only_symbol)
+		editor = "libnm-gtk3-vpn-plugin-trusttunnel-editor.so";
+	else
+		editor = "libnm-gtk4-vpn-plugin-trusttunnel-editor.so";
+
+	return nm_vpn_plugin_utils_load_editor (editor,
 	                                        "nm_vpn_editor_factory_trusttunnel",
 	                                        _call_editor_factory,
 	                                        iface,
@@ -157,9 +111,6 @@ trusttunnel_editor_plugin_interface_init (NMVpnEditorPluginInterface *iface_clas
 {
 	iface_class->get_editor = get_editor;
 	iface_class->get_capabilities = get_capabilities;
-	iface_class->import_from_file = import;
-	iface_class->export_to_file = export;
-	iface_class->get_suggested_filename = get_suggested_filename;
 }
 
 G_MODULE_EXPORT NMVpnEditorPlugin *

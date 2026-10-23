@@ -68,9 +68,11 @@ entry_changed_notify_cb (GObject *dropdown G_GNUC_UNUSED,
 
 /* Protocol ids in display order; they are the values the daemon
  * expects in upstream_protocol. */
-static const char *const protocol_ids[] = { "http3", "http2" };
+static const char *const protocol_ids[] = { "auto", "http2", "http3" };
 
 #define N_PROTOCOLS G_N_ELEMENTS (protocol_ids)
+
+#define PROTOCOL_DEFAULT_INDEX 1 /* http2 */
 
 /* Daemon log levels shown in the editor, as chosen in the TrustTunnel
  * client: info, debug, trace. The configuration model still accepts the
@@ -134,7 +136,7 @@ protocol_get_active (TrusttunnelEditorPrivate *priv)
 #if GTK_CHECK_VERSION (4, 0, 0)
 	guint idx = gtk_drop_down_get_selected (GTK_DROP_DOWN (priv->protocol_combo));
 
-	return (idx < N_PROTOCOLS) ? protocol_ids[idx] : "http2";
+	return (idx < N_PROTOCOLS) ? protocol_ids[idx] : protocol_ids[PROTOCOL_DEFAULT_INDEX];
 #else
 	return gtk_combo_box_get_active_id (GTK_COMBO_BOX (priv->protocol_combo));
 #endif
@@ -150,7 +152,7 @@ protocol_set_active (TrusttunnelEditorPrivate *priv, const char *protocol)
 			break;
 	}
 	if (i == (int) N_PROTOCOLS)
-		i = 1; /* http2 — the default */
+		i = PROTOCOL_DEFAULT_INDEX;
 
 #if GTK_CHECK_VERSION (4, 0, 0)
 	gtk_drop_down_set_selected (GTK_DROP_DOWN (priv->protocol_combo), (guint) i);
@@ -625,7 +627,7 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		GtkStringList *list;
 		GtkExpression *expr;
 
-		list = gtk_string_list_new ((const char *const[]) { "QUIC", "HTTP/2", NULL });
+		list = gtk_string_list_new ((const char *const[]) { "Auto", "HTTP/2", "QUIC", NULL });
 		gtk_drop_down_set_model (dropdown, G_LIST_MODEL (list));
 		g_object_unref (list);
 
@@ -633,12 +635,12 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		gtk_drop_down_set_expression (dropdown, expr);
 		gtk_expression_unref (expr);
 
-		gtk_drop_down_set_selected (dropdown, 1u); /* HTTP/2 */
+		gtk_drop_down_set_selected (dropdown, (guint) PROTOCOL_DEFAULT_INDEX); /* HTTP/2 */
 	}
 #else
 	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http3", "QUIC");
 	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->protocol_combo), "http2", "HTTP/2");
-	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), "http2");
+	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), protocol_ids[PROTOCOL_DEFAULT_INDEX]);
 #endif
 
 	/* Log levels follow the protocol chooser: ids are the daemon values,

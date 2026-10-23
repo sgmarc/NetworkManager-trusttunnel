@@ -25,6 +25,16 @@ nm_trusttunnel_config_default_dns_servers (void)
 	return default_dns_servers;
 }
 
+/* Free secret material without leaving it behind in freed heap blocks. */
+static void
+secure_free (char *str)
+{
+	if (str) {
+		memset (str, 0, strlen (str));
+		g_free (str);
+	}
+}
+
 static char *
 toml_escape (const char *str)
 {
@@ -732,7 +742,7 @@ nm_trusttunnel_config_free (NMTTrusttunnelConfig *config)
 	g_free (config->server);
 	g_free (config->address);
 	g_free (config->username);
-	g_free (config->password);
+	secure_free (config->password);
 	g_free (config->protocol);
 	g_free (config->custom_sni);
 	g_free (config->client_random);
@@ -932,7 +942,7 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 
 	g_free (escaped_server);
 	g_free (escaped_username);
-	g_free (escaped_password);
+	secure_free (escaped_password);
 	g_free (escaped_custom_sni);
 	g_free (escaped_log_level);
 

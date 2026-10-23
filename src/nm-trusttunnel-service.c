@@ -50,6 +50,16 @@ G_DEFINE_TYPE_WITH_PRIVATE (NMTrusttunnelPlugin, nm_trusttunnel_plugin, NM_TYPE_
 #define NM_TRUSTTUNNEL_PLUGIN_GET_PRIVATE(o) \
 	((NMTrusttunnelPluginPrivate *) nm_trusttunnel_plugin_get_instance_private (NM_TRUSTTUNNEL_PLUGIN (o)))
 
+/* The serialized TOML carries the endpoint password: wipe it before freeing. */
+static void
+clear_pending_toml (NMTrusttunnelPluginPrivate *priv)
+{
+	if (priv->pending_toml) {
+		memset (priv->pending_toml, 0, strlen (priv->pending_toml));
+		g_clear_pointer (&priv->pending_toml, g_free);
+	}
+}
+
 static GMainLoop *loop = NULL;
 
 /* State for an asynchronous call. It keeps the plugin alive and records the
@@ -671,7 +681,7 @@ on_start_reply (GObject *source, GAsyncResult *result, gpointer user_data)
 	}
 
 	priv->stopping_for_retry = FALSE;
-	g_clear_pointer (&priv->pending_toml, g_free);
+	clear_pending_toml (priv);
 	async_call_free (call);
 }
 
@@ -811,7 +821,7 @@ real_connect (NMVpnServicePlugin *plugin,
 	if (!config)
 		return FALSE;
 
-	g_clear_pointer (&priv->pending_toml, g_free);
+	clear_pending_toml (priv);
 	priv->pending_toml = nm_trusttunnel_config_to_toml (config, error);
 	priv->allow_ipv6 = config->allow_ipv6;
 	g_strfreev (priv->dns_servers);
@@ -934,7 +944,7 @@ real_disconnect (NMVpnServicePlugin *plugin, GError **err)
 	g_clear_pointer (&priv->endpoint_address, g_free);
 	g_strfreev (priv->dns_servers);
 	priv->dns_servers = NULL;
-	g_clear_pointer (&priv->pending_toml, g_free);
+	clear_pending_toml (priv);
 	priv->connected = FALSE;
 	priv->stopping_for_retry = FALSE;
 	priv->has_ip4 = FALSE;
@@ -1042,7 +1052,7 @@ nm_trusttunnel_plugin_finalize (GObject *object)
 	g_clear_pointer (&priv->endpoint_address, g_free);
 	g_strfreev (priv->dns_servers);
 	priv->dns_servers = NULL;
-	g_clear_pointer (&priv->pending_toml, g_free);
+	clear_pending_toml (priv);
 
 	G_OBJECT_CLASS (nm_trusttunnel_plugin_parent_class)->finalize (object);
 }

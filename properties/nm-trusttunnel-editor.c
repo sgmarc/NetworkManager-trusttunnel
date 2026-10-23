@@ -19,6 +19,7 @@ typedef struct {
 	GtkWidget *widget;
 	GtkWidget *gateway_entry;
 	GtkWidget *protocol_combo;
+	GtkWidget *log_level_combo;
 	GtkWidget *sni_entry;
 	GtkWidget *client_random_entry;
 	GtkWidget *cert_entry;
@@ -70,6 +71,62 @@ entry_changed_notify_cb (GObject *dropdown G_GNUC_UNUSED,
 static const char *const protocol_ids[] = { "http3", "http2" };
 
 #define N_PROTOCOLS G_N_ELEMENTS (protocol_ids)
+
+/* Daemon log levels shown in the editor, as chosen in the TrustTunnel
+ * client: info, debug, trace. The configuration model still accepts the
+ * full daemon set when it reads a profile. */
+static const char *const log_levels[] = { "info", "debug", "trace" };
+
+#define N_LOG_LEVELS G_N_ELEMENTS (log_levels)
+
+#define DEFAULT_LOG_LEVEL_INDEX 0 /* info */
+
+static const char *
+log_level_get_active (TrusttunnelEditorPrivate *priv)
+{
+	const char *active = NULL;
+	guint idx;
+
+#if GTK_CHECK_VERSION (4, 0, 0)
+	idx = gtk_drop_down_get_selected (GTK_DROP_DOWN (priv->log_level_combo));
+#else
+	{
+		active = gtk_combo_box_get_active_id (GTK_COMBO_BOX (priv->log_level_combo));
+		for (idx = 0; idx < N_LOG_LEVELS; idx++) {
+			if (g_strcmp0 (active, log_levels[idx]) == 0)
+				break;
+		}
+	}
+#endif
+	return (idx < N_LOG_LEVELS) ? log_levels[idx] : NM_TRUSTTUNNEL_DEFAULT_LOG_LEVEL;
+}
+
+static void
+log_level_set_active (TrusttunnelEditorPrivate *priv, const char *level)
+{
+	int i;
+	char *norm;
+
+	/* The daemon matches the level case-insensitively, so profiles may
+	 * carry "TRACE" or "Debug": fold before matching. */
+	if (!level || !*level)
+		return;
+	norm = g_ascii_strdown (level, -1);
+	for (i = 0; i < (int) N_LOG_LEVELS; i++) {
+		if (g_strcmp0 (norm, log_levels[i]) == 0)
+			break;
+	}
+	g_free (norm);
+	if (i == (int) N_LOG_LEVELS)
+		i = DEFAULT_LOG_LEVEL_INDEX;
+
+#if GTK_CHECK_VERSION (4, 0, 0)
+	gtk_drop_down_set_selected (GTK_DROP_DOWN (priv->log_level_combo), (guint) i);
+#else
+	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->log_level_combo),
+	                             log_levels[i]);
+#endif
+}
 
 static const char *
 protocol_get_active (TrusttunnelEditorPrivate *priv)
@@ -187,6 +244,9 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL,
 	               protocol_get_active (priv));
+
+	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_LOG_LEVEL,
+	               log_level_get_active (priv));
 
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CUSTOM_SNI,
 	               entry_get_text (priv->sni_entry));
@@ -542,6 +602,7 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	GET_WIDGET (client_random_entry);
 	GET_WIDGET (cert_entry);
 	GET_WIDGET (excluded_entry);
+	GET_WIDGET (log_level_combo);
 	choose = GTK_WIDGET (gtk_builder_get_object (builder, "cert_choose_button"));
 	clear = GTK_WIDGET (gtk_builder_get_object (builder, "cert_clear_button"));
 	priv->widget = GTK_WIDGET (gtk_builder_get_object (builder, "widget"));
@@ -580,6 +641,39 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->protocol_combo), "http2");
 #endif
 
+	/* Log levels follow the protocol chooser: ids are the daemon values,
+	 * GTK3 uses a GtkComboBoxText, GTK4 a GtkDropDown. */
+#if GTK_CHECK_VERSION (4, 0, 0)
+	{
+		GtkDropDown *dropdown = GTK_DROP_DOWN (priv->log_level_combo);
+		GtkStringList *list;
+		GtkExpression *expr;
+
+		list = gtk_string_list_new ((const char *const[]) {
+			"Info", "Debug", "Trace", NULL,
+		});
+		gtk_drop_down_set_model (dropdown, G_LIST_MODEL (list));
+		g_object_unref (list);
+
+		expr = gtk_property_expression_new (GTK_TYPE_STRING_OBJECT, NULL, "string");
+		gtk_drop_down_set_expression (dropdown, expr);
+		gtk_expression_unref (expr);
+
+		gtk_drop_down_set_selected (dropdown, (guint) DEFAULT_LOG_LEVEL_INDEX);
+	}
+#else
+	{
+		static const char *const labels[] = { "Info", "Debug", "Trace" };
+		guint i;
+
+		for (i = 0; i < N_LOG_LEVELS; i++)
+			gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT (priv->log_level_combo),
+			                           log_levels[i], labels[i]);
+		gtk_combo_box_set_active_id (GTK_COMBO_BOX (priv->log_level_combo),
+		                             NM_TRUSTTUNNEL_DEFAULT_LOG_LEVEL);
+	}
+#endif
+
 	g_signal_connect_swapped (choose, "clicked", G_CALLBACK (cert_choose_cb), self);
 
 	{
@@ -613,6 +707,9 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_PROTOCOL);
 		protocol_set_active (priv, val);
+
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_LOG_LEVEL);
+		log_level_set_active (priv, val);
 
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CUSTOM_SNI);
 		if (val)
@@ -665,8 +762,12 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 #if GTK_CHECK_VERSION (4, 0, 0)
 	g_signal_connect (priv->protocol_combo, "notify::selected",
 	                  G_CALLBACK (entry_changed_notify_cb), self);
+	g_signal_connect (priv->log_level_combo, "notify::selected",
+	                  G_CALLBACK (entry_changed_notify_cb), self);
 #else
 	g_signal_connect (priv->protocol_combo, "changed",
+	                  G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->log_level_combo, "changed",
 	                  G_CALLBACK (entry_changed_cb), self);
 #endif
 	g_signal_connect (priv->sni_entry, "changed", G_CALLBACK (entry_changed_cb), self);

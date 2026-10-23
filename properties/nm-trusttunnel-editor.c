@@ -129,6 +129,37 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 		return FALSE;
 	}
 
+	/* The certificate domain overrides the TLS server name; it takes a
+	 * bare host or address, never a port. */
+	{
+		const char *cert_domain = entry_get_text (priv->cert_domain_entry);
+		guint16 cert_port = 0;
+
+		if (cert_domain && *cert_domain &&
+		    (!nm_trusttunnel_config_parse_gateway (cert_domain, NULL, &cert_port) ||
+		     cert_port != 0)) {
+			g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+			             _("Invalid certificate domain \"%s\": expected a host "
+			               "without a port"),
+			             cert_domain);
+			return FALSE;
+		}
+	}
+
+	/* Same format as the TrustTunnel Flutter client: hex, optionally
+	 * "hex/hex" with equal lengths; empty is allowed. */
+	{
+		const char *client_random = entry_get_text (priv->client_random_entry);
+
+		if (!nm_trusttunnel_config_is_valid_client_random (client_random)) {
+			g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+			             _("Invalid client random \"%s\": expected hex, optionally "
+			               "\"hex/hex\" with equal lengths"),
+			             client_random);
+			return FALSE;
+		}
+	}
+
 	/* The host doubles as the TLS server name; the port, when given, is
 	 * kept in its own data item — even the default 443, so that what the
 	 * user typed stays visible in the editor. */
@@ -348,6 +379,11 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	 * (dispose frees it), exactly like NetworkManager-openvpn does. */
 	priv->builder = builder;
 #undef GET_WIDGET
+
+	/* Hard cap on the client random, matching the TrustTunnel Flutter
+	 * client; the content itself is validated on save. */
+	gtk_entry_set_max_length (GTK_ENTRY (priv->client_random_entry),
+	                          NM_TRUSTTUNNEL_MAX_FIELD_LENGTH);
 
 	/* Protocol items: the ids are the values the daemon expects in
 	 * upstream_protocol. GTK3 shows them in a GtkComboBoxText; GTK4

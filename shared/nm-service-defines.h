@@ -35,6 +35,10 @@
 #define NM_TRUSTTUNNEL_DEFAULT_LOG_LEVEL     "info"
 #define NM_TRUSTTUNNEL_DEFAULT_CLIENT_BINARY "trusttunnel_client"
 
+/* Maximum length of the client random field, in characters. Matches the
+ * limit used by the TrustTunnel Flutter client. */
+#define NM_TRUSTTUNNEL_MAX_FIELD_LENGTH      64
+
 /* Upstream protocol values accepted by trusttunneld.
  * See TrustTunnelClient/trusttunnel/src/config.cpp (UPSTREAM_PROTO_MAP).
  * Note that "quic" is not a daemon value, it is a legacy alias for "http3". */

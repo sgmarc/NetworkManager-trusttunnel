@@ -97,6 +97,53 @@ is_valid_endpoint_host (const char *host)
 	return TRUE;
 }
 
+static gboolean
+is_hex_string (const char *s, gsize len)
+{
+	gsize i;
+
+	if (len == 0 || (len % 2) != 0)
+		return FALSE;
+
+	for (i = 0; i < len; i++) {
+		if (!g_ascii_isxdigit ((guchar) s[i]))
+			return FALSE;
+	}
+
+	return TRUE;
+}
+
+/* The client random follows the Flutter client format: an even-length
+ * hex string, optionally followed by "/" and an equally long hex mask.
+ * The whole value is capped at NM_TRUSTTUNNEL_MAX_FIELD_LENGTH. Empty
+ * is valid — the field is optional. */
+gboolean
+nm_trusttunnel_config_is_valid_client_random (const char *value)
+{
+	const char *slash;
+
+	if (!value || !*value)
+		return TRUE;
+
+	if (strlen (value) > NM_TRUSTTUNNEL_MAX_FIELD_LENGTH)
+		return FALSE;
+
+	slash = strchr (value, '/');
+	if (slash) {
+		if (strchr (slash + 1, '/'))
+			return FALSE;
+
+		/* The mask must have the same length as the random. */
+		if (strlen (slash + 1) != (size_t) (slash - value))
+			return FALSE;
+
+		return is_hex_string (value, slash - value) &&
+		       is_hex_string (slash + 1, strlen (slash + 1));
+	}
+
+	return is_hex_string (value, strlen (value));
+}
+
 /* Convert CRLF and lone CR to LF so that the PEM certificate is stored in a
  * single canonical form before it is escaped into a TOML basic string. */
 static char *
@@ -687,6 +734,12 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 	if (!is_valid_log_level (config->log_level)) {
 		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
 		             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_LOG_LEVEL);
+		return NULL;
+	}
+
+	if (!nm_trusttunnel_config_is_valid_client_random (config->client_random)) {
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
 		return NULL;
 	}
 

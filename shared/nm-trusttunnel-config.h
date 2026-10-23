@@ -45,6 +45,10 @@ const char *const    *nm_trusttunnel_config_default_dns_servers (void);
 gboolean              nm_trusttunnel_config_parse_gateway (const char *gateway,
                                                           char **out_host,
                                                           guint16 *out_port);
+/* Validate the optional client random: hex, optionally "hex/hex" with the
+ * mask of the same length (the format of the TrustTunnel Flutter client).
+ * An empty value is valid — the field is optional. */
+gboolean              nm_trusttunnel_config_is_valid_client_random (const char *value);
 /* Read an external TOML file. This may only be called from a user session
  * (editor or import); the root service must never use it. */
 char                 *nm_trusttunnel_config_file_to_toml (const char *path,

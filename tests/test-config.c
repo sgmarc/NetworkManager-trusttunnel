@@ -494,6 +494,56 @@ test_certificate_escaping (void)
 }
 
 static void
+test_client_random (void)
+{
+	/* Optional: empty is fine. */
+	g_assert_true (nm_trusttunnel_config_is_valid_client_random (NULL));
+	g_assert_true (nm_trusttunnel_config_is_valid_client_random (""));
+
+	/* Plain hex, any case, even length. */
+	g_assert_true (nm_trusttunnel_config_is_valid_client_random ("aabb"));
+	g_assert_true (nm_trusttunnel_config_is_valid_client_random ("AABBCCDD"));
+
+	/* Random/mask, equal lengths. */
+	g_assert_true (nm_trusttunnel_config_is_valid_client_random ("aabb/CCDD"));
+
+	/* Rejects: odd length, non-hex, empty parts, multiple slashes,
+	 * unequal lengths. */
+	g_assert_false (nm_trusttunnel_config_is_valid_client_random ("abc"));
+	g_assert_false (nm_trusttunnel_config_is_valid_client_random ("zz"));
+	g_assert_false (nm_trusttunnel_config_is_valid_client_random ("aabb/"));
+	g_assert_false (nm_trusttunnel_config_is_valid_client_random ("/aabb"));
+	g_assert_false (nm_trusttunnel_config_is_valid_client_random ("aa/bb/cc"));
+	g_assert_false (nm_trusttunnel_config_is_valid_client_random ("aabb/cc"));
+
+	{
+		char *too_long = g_malloc (NM_TRUSTTUNNEL_MAX_FIELD_LENGTH + 2);
+
+		/* 65 hex chars: over the limit and odd — rejected. */
+		memset (too_long, 'a', NM_TRUSTTUNNEL_MAX_FIELD_LENGTH + 1);
+		too_long[NM_TRUSTTUNNEL_MAX_FIELD_LENGTH + 1] = '\0';
+		g_assert_false (nm_trusttunnel_config_is_valid_client_random (too_long));
+
+		/* Exactly 64 hex chars: at the limit, even — accepted. */
+		too_long[NM_TRUSTTUNNEL_MAX_FIELD_LENGTH] = '\0';
+		g_assert_true (nm_trusttunnel_config_is_valid_client_random (too_long));
+		g_free (too_long);
+	}
+
+	/* End to end: an invalid value must fail TOML serialization. */
+	{
+		NMSettingVpn *s_vpn = new_vpn_setting ();
+		GError *error = NULL;
+
+		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM, "zz");
+		g_assert_null (build_toml_for (s_vpn, &error));
+		g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
+		g_clear_error (&error);
+		g_object_unref (s_vpn);
+	}
+}
+
+static void
 test_config_file_rejected (void)
 {
 	NMSettingVpn *s_vpn = new_vpn_setting ();
@@ -533,6 +583,7 @@ main (int argc, char **argv)
 	g_test_add_func ("/config/file-quoted-managed", test_config_file_quoted_managed);
 	g_test_add_func ("/config/file-empty-routes", test_config_file_empty_routes_with_spaces);
 	g_test_add_func ("/config/log-level", test_log_level);
+	g_test_add_func ("/config/client-random", test_client_random);
 	g_test_add_func ("/config/address-injection", test_address_injection);
 	g_test_add_func ("/config/invalid-host", test_invalid_host);
 	g_test_add_func ("/config/certificate-escaping", test_certificate_escaping);

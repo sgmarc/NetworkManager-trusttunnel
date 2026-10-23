@@ -76,11 +76,13 @@ auth_dialog_nm_trusttunnel_auth_dialog_SOURCES = \
 
 auth_dialog_nm_trusttunnel_auth_dialog_CPPFLAGS = \
 	$(GIO_CFLAGS) \
+	$(GTK_CFLAGS) \
 	-I$(top_srcdir) \
 	-I$(top_srcdir)/shared
 
 auth_dialog_nm_trusttunnel_auth_dialog_LDADD = \
-	$(GIO_LIBS)
+	$(GIO_LIBS) \
+	$(GTK_LIBS)
 
 nm_trusttunnel_service_SOURCES = \
 	src/nm-trusttunnel-service.c \

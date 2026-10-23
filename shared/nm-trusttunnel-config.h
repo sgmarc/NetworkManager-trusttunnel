@@ -24,6 +24,7 @@ typedef struct {
 	char    *protocol;      /* upstream protocol: http2, http3 or auto */
 	char    *custom_sni;    /* custom TLS SNI, or NULL */
 	char    *client_random; /* TLS client random prefix/mask hex string, or NULL */
+	char    *excluded_routes; /* comma-separated CIDRs that bypass the tunnel, or NULL */
 	char    *cert_pem;      /* endpoint certificate in PEM format, or NULL */
 	char   **dns_servers;   /* NULL terminated list of DNS upstreams, or NULL */
 	gboolean allow_ipv6;    /* whether IPv6 may be used for the session */
@@ -49,6 +50,10 @@ gboolean              nm_trusttunnel_config_parse_gateway (const char *gateway,
  * mask of the same length (the format of the TrustTunnel Flutter client).
  * An empty value is valid — the field is optional. */
 gboolean              nm_trusttunnel_config_is_valid_client_random (const char *value);
+/* Validate a comma-separated list of CIDR prefixes ("a.b.c.d/p" or
+ * "x::y/p"); every token must parse and the prefix length must fit the
+ * address family. NULL or an empty string is valid — the list is optional. */
+gboolean              nm_trusttunnel_config_is_valid_excluded_routes (const char *value);
 /* Read an external TOML file. This may only be called from a user session
  * (editor or import); the root service must never use it. */
 char                 *nm_trusttunnel_config_file_to_toml (const char *path,

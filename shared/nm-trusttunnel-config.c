@@ -6,6 +6,9 @@
 #endif
 
 #include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #include <glib.h>
 #include <NetworkManager.h>
@@ -142,6 +145,62 @@ nm_trusttunnel_config_is_valid_client_random (const char *value)
 	}
 
 	return is_hex_string (value, strlen (value));
+}
+
+static gboolean
+is_valid_cidr (const char *cidr)
+{
+	const char *slash = strchr (cidr, '/');
+	gsize addr_len;
+	const char *digits;
+	struct in6_addr v6;
+	struct in_addr v4;
+	g_autofree char *addr = NULL;
+	gulong prefix;
+
+	if (!slash)
+		return FALSE;
+
+	addr_len = (gsize) (slash - cidr);
+	if (addr_len == 0 || addr_len >= INET_ADDRSTRLEN)
+		return FALSE;
+
+	/* The prefix must be a bare decimal number. */
+	digits = slash + 1;
+	if (!*digits)
+		return FALSE;
+	for (; *digits; digits++) {
+		if (!g_ascii_isdigit ((guchar) *digits))
+			return FALSE;
+	}
+	prefix = strtoul (slash + 1, NULL, 10);
+
+	/* inet_pton wants the bare address literal. */
+	addr = g_strndup (cidr, addr_len);
+	if (strchr (addr, ':')) {
+		return inet_pton (AF_INET6, addr, &v6) == 1 && prefix <= 128;
+	}
+	return inet_pton (AF_INET, addr, &v4) == 1 && prefix <= 32;
+}
+
+gboolean
+nm_trusttunnel_config_is_valid_excluded_routes (const char *value)
+{
+	g_auto(GStrv) tokens = NULL;
+	gsize i;
+
+	if (!value || !*value)
+		return TRUE;
+
+	tokens = g_strsplit (value, ",", -1);
+	for (i = 0; tokens[i]; i++) {
+		g_autofree char *token = g_strstrip (g_strdup (tokens[i]));
+
+		if (!*token || !is_valid_cidr (token))
+			return FALSE;
+	}
+
+	return TRUE;
 }
 
 /* Convert CRLF and lone CR to LF so that the PEM certificate is stored in a
@@ -620,7 +679,12 @@ nm_trusttunnel_config_from_settings (NMSettingVpn *s_vpn, GError **error)
 			return NULL;
 		}
 		config->client_random = g_strdup (value);
+
 	}
+
+	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES);
+	if (value)
+		config->excluded_routes = g_strdup (value);
 
 	value = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM);
 	if (value && *value)
@@ -672,6 +736,7 @@ nm_trusttunnel_config_free (NMTTrusttunnelConfig *config)
 	g_free (config->protocol);
 	g_free (config->custom_sni);
 	g_free (config->client_random);
+	g_free (config->excluded_routes);
 	g_free (config->cert_pem);
 	g_strfreev (config->dns_servers);
 	g_free (config->log_level);
@@ -740,6 +805,12 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 	if (!nm_trusttunnel_config_is_valid_client_random (config->client_random)) {
 		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
 		             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM);
+		return NULL;
+	}
+
+	if (!nm_trusttunnel_config_is_valid_excluded_routes (config->excluded_routes)) {
+		g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+		             "Invalid value for setting \"%s\"", NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES);
 		return NULL;
 	}
 
@@ -835,7 +906,29 @@ build_toml (const NMTTrusttunnelConfig *config, GError **error)
 	g_string_append (toml, "[listener.tun]\n");
 	g_string_append (toml, "managed = false\n");
 	g_string_append (toml, "included_routes = []\n");
-	g_string_append (toml, "excluded_routes = []\n");
+	{
+		/* The excluded prefixes bypass the tunnel via bypass routes that the
+		 * daemon installs through the physical network. The list arrives as
+		 * a comma-separated profile item and must be emitted as a TOML
+		 * array of escaped strings. */
+		g_auto(GStrv) tokens = NULL;
+		gboolean first = TRUE;
+		gsize i;
+
+		g_string_append (toml, "excluded_routes = [");
+		tokens = config->excluded_routes ? g_strsplit (config->excluded_routes, ",", -1) : NULL;
+		for (i = 0; tokens && tokens[i]; i++) {
+			g_autofree char *token = g_strstrip (g_strdup (tokens[i]));
+			g_autofree char *escaped = NULL;
+
+			if (!*token)
+				continue;
+			escaped = toml_escape (token);
+			g_string_append_printf (toml, "%s\"%s\"", first ? "" : ", ", escaped);
+			first = FALSE;
+		}
+		g_string_append (toml, "]\n");
+	}
 
 	g_free (escaped_server);
 	g_free (escaped_username);

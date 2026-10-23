@@ -23,6 +23,7 @@ typedef struct {
 	GtkWidget *client_random_entry;
 	GtkWidget *cert_entry;
 	GtkWidget *cert_domain_entry;
+	GtkWidget *excluded_entry;
 	char *cert_pem;
 	GtkBuilder *builder;
 	GtkWidget *username_entry;
@@ -160,6 +161,20 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 		}
 	}
 
+	/* Comma-separated CIDRs; the daemon rejects the session itself if a
+	 * token does not parse, so fail already in the editor. */
+	{
+		const char *excluded = entry_get_text (priv->excluded_entry);
+
+		if (!nm_trusttunnel_config_is_valid_excluded_routes (excluded)) {
+			g_set_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS,
+			             _("Invalid excluded routes \"%s\": expected comma-separated "
+			               "CIDR prefixes, e.g. 192.168.0.0/16"),
+			             excluded);
+			return FALSE;
+		}
+	}
+
 	/* The host doubles as the TLS server name; the port, when given, is
 	 * kept in its own data item — even the default 443, so that what the
 	 * user typed stays visible in the editor. */
@@ -177,6 +192,27 @@ update_connection (NMVpnEditor *iface, NMConnection *connection, GError **error)
 	               entry_get_text (priv->sni_entry));
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM,
 	               entry_get_text (priv->client_random_entry));
+
+	/* Normalize the excluded routes list: trim the tokens, drop empties,
+	 * join back with commas. An empty field means a plain full tunnel. */
+	{
+		g_autoptr(GPtrArray) tokens = g_ptr_array_new_with_free_func (g_free);
+		g_autofree char *joined = NULL;
+		g_auto(GStrv) raw = g_strsplit (entry_get_text (priv->excluded_entry), ",", -1);
+		gsize i;
+
+		for (i = 0; raw[i]; i++) {
+			char *token = g_strstrip (g_strdup (raw[i]));
+
+			if (*token)
+				g_ptr_array_add (tokens, token);
+			else
+				g_free (token);
+		}
+		g_ptr_array_add (tokens, NULL);
+		joined = g_strjoinv (",", (char **) tokens->pdata);
+		set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES, joined);
+	}
 
 	set_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM, priv->cert_pem);
 
@@ -297,6 +333,16 @@ entry_check_value (TrusttunnelEditorPrivate *priv, GtkWidget *entry,
 		return FALSE;
 	}
 
+	if (entry == priv->excluded_entry) {
+		if (nm_trusttunnel_config_is_valid_excluded_routes (value))
+			return TRUE;
+
+		*message = g_strdup_printf (_("\"%s\" is not a valid network list: "
+		                              "expected comma-separated CIDR prefixes, "
+		                              "e.g. 192.168.0.0/16"), value);
+		return FALSE;
+	}
+
 	if (entry == priv->client_random_entry) {
 		if (nm_trusttunnel_config_is_valid_client_random (value))
 			return TRUE;
@@ -335,6 +381,7 @@ entries_validate_all (TrusttunnelEditorPrivate *priv)
 		priv->gateway_entry,
 		priv->cert_domain_entry,
 		priv->client_random_entry,
+		priv->excluded_entry,
 	};
 
 	for (i = 0; i < G_N_ELEMENTS (checked); i++) {
@@ -494,6 +541,7 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	GET_WIDGET (protocol_combo);
 	GET_WIDGET (client_random_entry);
 	GET_WIDGET (cert_entry);
+	GET_WIDGET (excluded_entry);
 	choose = GTK_WIDGET (gtk_builder_get_object (builder, "cert_choose_button"));
 	clear = GTK_WIDGET (gtk_builder_get_object (builder, "cert_clear_button"));
 	priv->widget = GTK_WIDGET (gtk_builder_get_object (builder, "widget"));
@@ -574,6 +622,14 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 		if (val)
 			entry_set_text (priv->client_random_entry, val);
 
+		/* A profile that never configured exclusions starts with the same
+		 * list the TrustTunnel Flutter client wizard configures: local
+		 * networks, link-local and multicast. Once the item exists in the
+		 * profile (even empty), it is shown as-is. */
+		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES);
+		entry_set_text (priv->excluded_entry,
+		                val ? val : NM_TRUSTTUNNEL_DEFAULT_EXCLUDED_ROUTES);
+
 		val = nm_setting_vpn_get_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_CERT_PEM);
 		if (val && *val) {
 			priv->cert_pem = g_strdup (val);
@@ -617,6 +673,8 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->password_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->client_random_entry, "changed",
+	                  G_CALLBACK (entry_changed_validate_cb), self);
+	g_signal_connect (priv->excluded_entry, "changed",
 	                  G_CALLBACK (entry_changed_validate_cb), self);
 
 	entries_validate_all (priv);

@@ -544,6 +544,58 @@ test_client_random (void)
 }
 
 static void
+test_excluded_routes (void)
+{
+	/* Optional: empty is fine. */
+	g_assert_true (nm_trusttunnel_config_is_valid_excluded_routes (NULL));
+	g_assert_true (nm_trusttunnel_config_is_valid_excluded_routes (""));
+
+	/* The default wizard list. */
+	g_assert_true (nm_trusttunnel_config_is_valid_excluded_routes
+	               (NM_TRUSTTUNNEL_DEFAULT_EXCLUDED_ROUTES));
+
+	/* IPv4 and IPv6 prefixes, spaces tolerated. */
+	g_assert_true (nm_trusttunnel_config_is_valid_excluded_routes ("192.168.0.0/16, 2001:db8::/32"));
+
+	/* Rejects: no prefix, out-of-range prefix, garbage, empty token. */
+	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes ("10.0.0.0"));
+	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes ("10.0.0.0/33"));
+	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes ("2001:db8::/129"));
+	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes ("not-a-network/8"));
+	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes ("10.0.0.0/8,,192.168.0.0/16"));
+	g_assert_false (nm_trusttunnel_config_is_valid_excluded_routes ("10.0.0.0/8;reboot"));
+
+	/* End to end: the profile item is emitted verbatim as a TOML array. */
+	{
+		NMSettingVpn *s_vpn = new_vpn_setting ();
+		GError *error = NULL;
+		char *toml;
+
+		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES,
+		                              "192.168.0.0/16, 2001:db8::/32");
+		toml = build_toml_for (s_vpn, &error);
+		g_assert_no_error (error);
+		g_assert_nonnull (toml);
+		g_assert_nonnull (strstr (toml,
+		                          "excluded_routes = [\"192.168.0.0/16\", \"2001:db8::/32\"]"));
+		g_free (toml);
+		g_object_unref (s_vpn);
+	}
+
+	/* End to end: an invalid list must fail TOML serialization. */
+	{
+		NMSettingVpn *s_vpn = new_vpn_setting ();
+		GError *error = NULL;
+
+		nm_setting_vpn_add_data_item (s_vpn, NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES, "10.0.0.0/33");
+		g_assert_null (build_toml_for (s_vpn, &error));
+		g_assert_error (error, NM_VPN_PLUGIN_ERROR, NM_VPN_PLUGIN_ERROR_BAD_ARGUMENTS);
+		g_clear_error (&error);
+		g_object_unref (s_vpn);
+	}
+}
+
+static void
 test_config_file_rejected (void)
 {
 	NMSettingVpn *s_vpn = new_vpn_setting ();
@@ -584,6 +636,7 @@ main (int argc, char **argv)
 	g_test_add_func ("/config/file-empty-routes", test_config_file_empty_routes_with_spaces);
 	g_test_add_func ("/config/log-level", test_log_level);
 	g_test_add_func ("/config/client-random", test_client_random);
+	g_test_add_func ("/config/excluded-routes", test_excluded_routes);
 	g_test_add_func ("/config/address-injection", test_address_injection);
 	g_test_add_func ("/config/invalid-host", test_invalid_host);
 	g_test_add_func ("/config/certificate-escaping", test_certificate_escaping);

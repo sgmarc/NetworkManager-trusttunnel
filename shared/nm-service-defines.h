@@ -26,6 +26,7 @@
 #define NM_TRUSTTUNNEL_KEY_CLIENT_RANDOM     "client-random"
 #define NM_TRUSTTUNNEL_KEY_CERT_PEM          "cert-pem"
 #define NM_TRUSTTUNNEL_KEY_DNS_SERVERS       "dns-servers"
+#define NM_TRUSTTUNNEL_KEY_EXCLUDED_ROUTES   "excluded-routes"
 #define NM_TRUSTTUNNEL_KEY_ALLOW_IPV6        "allow-ipv6"
 #define NM_TRUSTTUNNEL_KEY_CLIENT_BINARY     "client-binary"
 #define NM_TRUSTTUNNEL_KEY_LOG_LEVEL         "log-level"
@@ -38,6 +39,13 @@
 /* Maximum length of the client random field, in characters. Matches the
  * limit used by the TrustTunnel Flutter client. */
 #define NM_TRUSTTUNNEL_MAX_FIELD_LENGTH      64
+
+/* Comma-separated CIDR prefixes that must bypass the tunnel. This is the
+ * default the TrustTunnel Flutter client wizard configures: local networks,
+ * link-local and multicast, so LAN resources keep working under a full
+ * tunnel. */
+#define NM_TRUSTTUNNEL_DEFAULT_EXCLUDED_ROUTES \
+	"0.0.0.0/8,10.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,224.0.0.0/3"
 
 /* Upstream protocol values accepted by trusttunneld.
  * See TrustTunnelClient/trusttunnel/src/config.cpp (UPSTREAM_PROTO_MAP).

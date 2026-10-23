@@ -225,6 +225,128 @@ entry_changed_cb (GtkEditable *editable, gpointer user_data)
 	g_signal_emit_by_name (self, "changed");
 }
 
+/* Live validation feedback, styled exactly like the DNS entry of the IPv4
+ * page in gnome-control-center: the Adwaita "warning" style class (which
+ * draws the warning indication and colors the entry) plus a tooltip with
+ * the reason. */
+static void
+entry_set_validation (GtkWidget *entry, gboolean valid, const char *message)
+{
+#if GTK_CHECK_VERSION (4, 0, 0)
+	if (valid)
+		gtk_widget_remove_css_class (entry, "warning");
+	else
+		gtk_widget_add_css_class (entry, "warning");
+#else
+	GtkStyleContext *context = gtk_widget_get_style_context (entry);
+
+	if (valid)
+		gtk_style_context_remove_class (context, GTK_STYLE_CLASS_WARNING);
+	else
+		gtk_style_context_add_class (context, GTK_STYLE_CLASS_WARNING);
+#endif
+
+	if (valid) {
+		gtk_entry_set_icon_from_icon_name (GTK_ENTRY (entry),
+		                                   GTK_ENTRY_ICON_SECONDARY, NULL);
+		gtk_widget_set_tooltip_text (entry, NULL);
+	} else {
+		gtk_entry_set_icon_from_icon_name (GTK_ENTRY (entry),
+		                                   GTK_ENTRY_ICON_SECONDARY,
+		                                   "dialog-warning-symbolic");
+		gtk_entry_set_icon_tooltip_text (GTK_ENTRY (entry),
+		                                 GTK_ENTRY_ICON_SECONDARY, message);
+		gtk_widget_set_tooltip_text (entry, message);
+	}
+}
+
+/* Validate one of the fields that have content rules. Returns TRUE when
+ * the value is acceptable; otherwise sets @message. */
+static gboolean
+entry_check_value (TrusttunnelEditorPrivate *priv, GtkWidget *entry,
+                   char **message)
+{
+	const char *value = entry_get_text (entry);
+
+	if (entry == priv->gateway_entry) {
+		char *host = NULL;
+		guint16 port = 0;
+
+		if (nm_trusttunnel_config_parse_gateway (value, &host, &port)) {
+			g_free (host);
+			return TRUE;
+		}
+		*message = g_strdup_printf (_("\"%s\" is not a valid gateway: "
+		                              "expected host or host:port"), value);
+		return FALSE;
+	}
+
+	if (entry == priv->cert_domain_entry) {
+		guint16 port = 0;
+
+		/* Optional: empty falls back to the gateway host. */
+		if (!value || !*value)
+			return TRUE;
+
+		if (nm_trusttunnel_config_parse_gateway (value, NULL, &port) && port == 0)
+			return TRUE;
+
+		*message = g_strdup_printf (_("\"%s\" is not a valid certificate "
+		                              "domain: expected a host without a port"),
+		                            value);
+		return FALSE;
+	}
+
+	if (entry == priv->client_random_entry) {
+		if (nm_trusttunnel_config_is_valid_client_random (value))
+			return TRUE;
+
+		*message = g_strdup_printf (_("\"%s\" is not a valid client random: "
+		                              "expected hex, optionally \"hex/hex\" "
+		                              "with equal lengths"), value);
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+static void
+entry_changed_validate_cb (GtkEditable *editable, gpointer user_data)
+{
+	TrusttunnelEditor *self = TRUSTTUNNEL_EDITOR (user_data);
+	TrusttunnelEditorPrivate *priv = TRUSTTUNNEL_EDITOR_GET_PRIVATE (self);
+	GtkWidget *entry = GTK_WIDGET (editable);
+	char *message = NULL;
+
+	entry_set_validation (entry, entry_check_value (priv, entry, &message),
+	                      message ? message : "");
+	g_free (message);
+
+	g_signal_emit_by_name (self, "changed");
+}
+
+/* Re-run validation for all checked fields without emitting "changed";
+ * used after populating the widgets from the profile. */
+static void
+entries_validate_all (TrusttunnelEditorPrivate *priv)
+{
+	guint i;
+	GtkWidget *checked[] = {
+		priv->gateway_entry,
+		priv->cert_domain_entry,
+		priv->client_random_entry,
+	};
+
+	for (i = 0; i < G_N_ELEMENTS (checked); i++) {
+		char *message = NULL;
+
+		entry_set_validation (checked[i],
+		                      entry_check_value (priv, checked[i], &message),
+		                      message ? message : "");
+		g_free (message);
+	}
+}
+
 static GtkWidget *
 get_toplevel_window (GtkWidget *widget)
 {
@@ -482,7 +604,8 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 
 	/* Connect only after populating, so that filling the initial values is
 	 * not reported as a user modification. */
-	g_signal_connect (priv->gateway_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->gateway_entry, "changed",
+	                  G_CALLBACK (entry_changed_validate_cb), self);
 #if GTK_CHECK_VERSION (4, 0, 0)
 	g_signal_connect (priv->protocol_combo, "notify::selected",
 	                  G_CALLBACK (entry_changed_notify_cb), self);
@@ -491,10 +614,12 @@ init_editor_ui (TrusttunnelEditor *self, NMConnection *connection)
 	                  G_CALLBACK (entry_changed_cb), self);
 #endif
 	g_signal_connect (priv->sni_entry, "changed", G_CALLBACK (entry_changed_cb), self);
-	g_signal_connect (priv->client_random_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->username_entry, "changed", G_CALLBACK (entry_changed_cb), self);
 	g_signal_connect (priv->password_entry, "changed", G_CALLBACK (entry_changed_cb), self);
-	g_signal_connect (priv->cert_domain_entry, "changed", G_CALLBACK (entry_changed_cb), self);
+	g_signal_connect (priv->client_random_entry, "changed",
+	                  G_CALLBACK (entry_changed_validate_cb), self);
+
+	entries_validate_all (priv);
 }
 
 NMVpnEditor *
